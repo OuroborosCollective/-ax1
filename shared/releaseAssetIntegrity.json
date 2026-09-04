@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "source": "aurion-hero-trailer-en-de_c44ee2e1.mp4",
+      "target": "aurion-hero-trailer-en-de_c44ee2e1.mp4",
+      "bytes": 25137988,
+      "sha256": "9d34caabcc733692f06a79473ebb5d354d3e0ff1b57e63cd0ec657fe31b5646f"
+    },
+    {
+      "source": "aurion-social-keyframe_5edc4882.png",
+      "target": "aurion-social-keyframe_5edc4882.png",
+      "bytes": 398174,
+      "sha256": "2bb90457995e6ba7c5e1e59249d136218545af0b79fa50902664e459f0269d3a"
+    }
+  ]
+}

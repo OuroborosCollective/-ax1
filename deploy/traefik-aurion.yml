@@ -1,0 +1,38 @@
+# Traefik Reverse Proxy Configuration for Echoes of Aurion
+# Network: areloria_arelorian-network
+# Routing: Host(`arelogic.space`) with automated Let's Encrypt TLS
+
+http:
+  routers:
+    aurion-router:
+      rule: "Host(`arelogic.space`)"
+      entryPoints:
+        - websecure
+      service: aurion-service
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - aurion-ratelimit
+        - aurion-headers
+
+  services:
+    aurion-service:
+      loadBalancer:
+        servers:
+          - url: "http://aurion-app:3000"
+        healthCheck:
+          path: "/healthz"
+          interval: "10s"
+          timeout: "3s"
+
+  middlewares:
+    aurion-ratelimit:
+      rateLimit:
+        average: 100
+        burst: 50
+    aurion-headers:
+      headers:
+        customFrameOptionsValue: "SAMEORIGIN"
+        sslRedirect: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true

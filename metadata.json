@@ -1,0 +1,6 @@
+{
+  "name": "Aurion",
+  "description": "3D Open-World MMORPG with physical solid obstacle collision detection, dynamic procedural world expansion up to 120,000+ sqm for up to 2900 players, persistent world logic, kingdoms, borders, forests, cities, and dungeons.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
