@@ -269,9 +269,14 @@ export class BinaryNPCSnapshotSerializer {
 
   /**
    * Deserializes a binary ArrayBuffer back into structured NPCSnapshot entities.
+   * Includes boundary safety checks to prevent RangeErrors on truncated network packets.
    */
   public static deserialize(buffer: ArrayBuffer | Uint8Array): DeserializedSnapshotResult {
     const arrayBuffer = buffer instanceof Uint8Array ? buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) : buffer;
+    if (arrayBuffer.byteLength < 24) {
+      throw new Error(`[BinarySerializer] Buffer too small for header: ${arrayBuffer.byteLength} bytes`);
+    }
+
     const view = new DataView(arrayBuffer);
     let offset = 0;
 
@@ -296,11 +301,18 @@ export class BinaryNPCSnapshotSerializer {
     const npcs: NPCSnapshot[] = [];
 
     for (let i = 0; i < count; i++) {
+      // Guard against buffer truncation
+      if (offset + 60 > arrayBuffer.byteLength) {
+        console.warn(`[BinarySerializer] Packet truncated at entity ${i}/${count}. Recovering partial snapshot.`);
+        break;
+      }
+
       const idNum = view.getUint16(offset, false);
       offset += 2;
 
       const nameLen = view.getUint8(offset);
       offset += 1;
+      if (offset + nameLen > arrayBuffer.byteLength) break;
       const nameBytes = new Uint8Array(arrayBuffer, offset, nameLen);
       const name = this.textDecoder.decode(nameBytes);
       offset += nameLen;

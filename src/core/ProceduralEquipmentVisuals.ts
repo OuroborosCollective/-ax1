@@ -482,66 +482,75 @@ export class ProceduralEquipmentVisuals {
           maxIntensity: 2.2,
         });
       } else if (helmVariant === 0) {
-        // Visored Knight Greathelm
-        const greathelmGeo = new THREE.BoxGeometry(0.52, 0.56, 0.52);
+        // Segmented Knight Greathelm with cheek guards and crest fin
+        const greathelmGeo = new THREE.CylinderGeometry(0.24, 0.23, 0.44, 8);
         const greathelm = new THREE.Mesh(greathelmGeo, metalMat);
-        greathelm.position.set(0, 0.08, 0);
+        greathelm.position.set(0, 0.06, 0);
         fallbackGroup.add(greathelm);
 
-        const visorGeo = new THREE.BoxGeometry(0.44, 0.1, 0.14);
+        // Cheek Guards
+        const cheekGeo = new THREE.BoxGeometry(0.08, 0.24, 0.22);
+        const leftCheek = new THREE.Mesh(cheekGeo, metalMat);
+        leftCheek.position.set(-0.21, -0.06, 0.08);
+        const rightCheek = new THREE.Mesh(cheekGeo, metalMat);
+        rightCheek.position.set(0.21, -0.06, 0.08);
+        fallbackGroup.add(leftCheek);
+        fallbackGroup.add(rightCheek);
+
+        const visorGeo = new THREE.BoxGeometry(0.36, 0.08, 0.12);
         const visor = new THREE.Mesh(visorGeo, glowMat);
-        visor.position.set(0, 0.08, 0.24);
+        visor.position.set(0, 0.06, 0.18);
         fallbackGroup.add(visor);
 
-        const crestFinGeo = new THREE.BoxGeometry(0.06, 0.32, 0.48);
+        const crestFinGeo = new THREE.BoxGeometry(0.05, 0.24, 0.38);
         const crestFin = new THREE.Mesh(crestFinGeo, goldMat);
-        crestFin.position.set(0, 0.42, -0.04);
+        crestFin.position.set(0, 0.32, -0.04);
         fallbackGroup.add(crestFin);
       } else if (helmVariant === 1) {
         // Aviator Goggles & Brass Diadem
-        const goggleFrameGeo = new THREE.TorusGeometry(0.1, 0.03, 6, 12);
+        const goggleFrameGeo = new THREE.TorusGeometry(0.09, 0.025, 6, 12);
         const leftGoggle = new THREE.Mesh(goggleFrameGeo, metalMat);
-        leftGoggle.position.set(-0.12, 0.06, 0.24);
+        leftGoggle.position.set(-0.10, 0.06, 0.20);
         const rightGoggle = new THREE.Mesh(goggleFrameGeo, metalMat);
-        rightGoggle.position.set(0.12, 0.06, 0.24);
+        rightGoggle.position.set(0.10, 0.06, 0.20);
         fallbackGroup.add(leftGoggle);
         fallbackGroup.add(rightGoggle);
 
-        const lensGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.02, 10);
+        const lensGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.02, 10);
         lensGeo.rotateX(Math.PI / 2);
         const leftLens = new THREE.Mesh(lensGeo, glowMat);
-        leftLens.position.set(-0.12, 0.06, 0.24);
+        leftLens.position.set(-0.10, 0.06, 0.20);
         const rightLens = new THREE.Mesh(lensGeo, glowMat);
-        rightLens.position.set(0.12, 0.06, 0.24);
+        rightLens.position.set(0.10, 0.06, 0.20);
         fallbackGroup.add(leftLens);
         fallbackGroup.add(rightLens);
 
-        const crownGeo = new THREE.CylinderGeometry(0.28, 0.26, 0.12, 6);
+        const crownGeo = new THREE.CylinderGeometry(0.23, 0.22, 0.10, 8);
         const crown = new THREE.Mesh(crownGeo, goldMat);
-        crown.position.set(0, 0.28, 0);
+        crown.position.set(0, 0.22, 0);
         fallbackGroup.add(crown);
       } else if (helmVariant === 2) {
         // Mystical Chrono Cowl
-        const cowlGeo = new THREE.ConeGeometry(0.36, 0.65, 8);
-        cowlGeo.rotateX(-Math.PI / 10);
+        const cowlGeo = new THREE.ConeGeometry(0.30, 0.55, 8);
+        cowlGeo.rotateX(-Math.PI / 12);
         const cowl = new THREE.Mesh(cowlGeo, new THREE.MeshStandardMaterial({ color: theme.secondaryColor, roughness: 0.8 }));
-        cowl.position.set(0, 0.24, -0.06);
+        cowl.position.set(0, 0.20, -0.05);
         fallbackGroup.add(cowl);
 
-        const eyeSlitGeo = new THREE.BoxGeometry(0.42, 0.06, 0.08);
+        const eyeSlitGeo = new THREE.BoxGeometry(0.32, 0.05, 0.08);
         const eyeSlit = new THREE.Mesh(eyeSlitGeo, glowMat);
-        eyeSlit.position.set(0, 0.06, 0.23);
+        eyeSlit.position.set(0, 0.05, 0.18);
         fallbackGroup.add(eyeSlit);
       } else {
         // Standard Segmented Spangenhelm
-        const salletGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.32, 8);
+        const salletGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.30, 8);
         const sallet = new THREE.Mesh(salletGeo, metalMat);
-        sallet.position.set(0, 0.18, 0);
+        sallet.position.set(0, 0.14, 0);
         fallbackGroup.add(sallet);
 
-        const noseGuardGeo = new THREE.BoxGeometry(0.08, 0.22, 0.06);
+        const noseGuardGeo = new THREE.BoxGeometry(0.06, 0.18, 0.06);
         const noseGuard = new THREE.Mesh(noseGuardGeo, goldMat);
-        noseGuard.position.set(0, 0.06, 0.25);
+        noseGuard.position.set(0, 0.04, 0.20);
         fallbackGroup.add(noseGuard);
       }
     });
@@ -578,7 +587,7 @@ export class ProceduralEquipmentVisuals {
 
       if (!shoulders) {
         // Minimalist shoulder cup
-        const basicCapGeo = new THREE.SphereGeometry(0.18, 6, 6);
+        const basicCapGeo = new THREE.SphereGeometry(0.14, 8, 8);
         const leftCap = new THREE.Mesh(basicCapGeo, metalMat);
         const rightCap = new THREE.Mesh(basicCapGeo, metalMat);
         leftFallback.add(leftCap);
@@ -591,17 +600,17 @@ export class ProceduralEquipmentVisuals {
 
       if (theme.isMystic || variant === 0) {
         // Mantle of Floating Aether Shards
-        const plateGeo = new THREE.BoxGeometry(0.38, 0.16, 0.38);
+        const plateGeo = new THREE.CylinderGeometry(0.16, 0.12, 0.14, 6);
         const leftPlate = new THREE.Mesh(plateGeo, metalMat);
         const rightPlate = new THREE.Mesh(plateGeo, metalMat);
 
-        const crystalGeo = new THREE.OctahedronGeometry(0.16, 0);
+        const crystalGeo = new THREE.OctahedronGeometry(0.12, 0);
         const leftCrystal = new THREE.Mesh(crystalGeo, glowMat);
-        leftCrystal.position.set(0, 0.24, 0);
+        leftCrystal.position.set(0, 0.18, 0);
         leftPlate.add(leftCrystal);
 
         const rightCrystal = new THREE.Mesh(crystalGeo, glowMat);
-        rightCrystal.position.set(0, 0.24, 0);
+        rightCrystal.position.set(0, 0.18, 0);
         rightPlate.add(rightCrystal);
 
         leftFallback.add(leftPlate);
@@ -619,42 +628,42 @@ export class ProceduralEquipmentVisuals {
         });
       } else if (variant === 1) {
         // Spiked Vanguard Pauldrons
-        const plateGeo = new THREE.BoxGeometry(0.36, 0.42, 0.38);
-        const spikeGeo = new THREE.ConeGeometry(0.12, 0.45, 4);
-        spikeGeo.rotateZ(Math.PI / 4);
+        const plateGeo = new THREE.ConeGeometry(0.20, 0.32, 6);
+        const spikeGeo = new THREE.ConeGeometry(0.08, 0.32, 4);
 
         const leftP = new THREE.Mesh(plateGeo, metalMat);
+        leftP.rotation.z = Math.PI / 4;
         const leftSpike = new THREE.Mesh(spikeGeo, goldMat);
-        leftSpike.position.set(-0.16, 0.2, 0);
+        leftSpike.position.set(-0.10, 0.16, 0);
         leftP.add(leftSpike);
         leftFallback.add(leftP);
 
         const rightP = new THREE.Mesh(plateGeo, metalMat);
+        rightP.rotation.z = -Math.PI / 4;
         const rightSpike = new THREE.Mesh(spikeGeo, goldMat);
-        rightSpike.position.set(0.16, 0.2, 0);
-        rightSpike.rotation.z = -Math.PI / 2;
+        rightSpike.position.set(0.10, 0.16, 0);
         rightP.add(rightSpike);
         rightFallback.add(rightP);
       } else if (variant === 2) {
         // Lion Crest Royal Pauldrons
-        const lionGeo = new THREE.BoxGeometry(0.42, 0.46, 0.42);
+        const lionGeo = new THREE.CylinderGeometry(0.22, 0.16, 0.28, 6);
         const leftLion = new THREE.Mesh(lionGeo, goldMat);
         const rightLion = new THREE.Mesh(lionGeo, goldMat);
 
-        const flareGeo = new THREE.ConeGeometry(0.22, 0.32, 5);
+        const flareGeo = new THREE.ConeGeometry(0.14, 0.24, 5);
         const leftFlare = new THREE.Mesh(flareGeo, glowMat);
-        leftFlare.position.set(-0.1, 0.25, 0);
+        leftFlare.position.set(-0.06, 0.18, 0);
         leftLion.add(leftFlare);
 
         const rightFlare = new THREE.Mesh(flareGeo, glowMat);
-        rightFlare.position.set(0.1, 0.25, 0);
+        rightFlare.position.set(0.06, 0.18, 0);
         rightLion.add(rightFlare);
 
         leftFallback.add(leftLion);
         rightFallback.add(rightLion);
       } else {
         // Segmented Fluted Pauldron
-        const pauldronGeo = new THREE.ConeGeometry(0.32, 0.46, 6);
+        const pauldronGeo = new THREE.ConeGeometry(0.22, 0.34, 6);
         const leftP = new THREE.Mesh(pauldronGeo, metalMat);
         leftP.rotation.z = Math.PI / 4;
         leftFallback.add(leftP);
@@ -698,16 +707,16 @@ export class ProceduralEquipmentVisuals {
         emissiveIntensity: theme.emissiveIntensity,
       });
 
-      // Base Torso Geometry
-      const torsoGeo = new THREE.BoxGeometry(0.74, 0.85, 0.48);
+      // Sculpted Anatomical Cuirass / Torso
+      const torsoGeo = new THREE.CylinderGeometry(0.34, 0.24, 0.72, 8);
       const mainTorso = new THREE.Mesh(torsoGeo, chest ? metalMat : secondaryMat);
-      mainTorso.position.set(0, 0.35, 0);
+      mainTorso.position.set(0, 0.36, 0);
       fallbackGroup.add(mainTorso);
 
       if (!chest) {
-        const boilerGeo = new THREE.CylinderGeometry(0.16, 0.16, 0.65, 8);
+        const boilerGeo = new THREE.CylinderGeometry(0.10, 0.10, 0.50, 8);
         const boiler = new THREE.Mesh(boilerGeo, secondaryMat);
-        boiler.position.set(0, 0.45, -0.3);
+        boiler.position.set(0, 0.38, -0.22);
         fallbackGroup.add(boiler);
         return;
       }
@@ -715,32 +724,33 @@ export class ProceduralEquipmentVisuals {
       const seed = hashString(chest.id + chest.name);
       const variant = seed % 3;
 
-      // Heavy Plated Breastplate
-      const breastplateGeo = new THREE.BoxGeometry(0.68, 0.56, 0.16);
+      // Sculpted Breastplate Front Plating
+      const breastplateGeo = new THREE.CylinderGeometry(0.32, 0.22, 0.46, 8, 1, false, 0, Math.PI);
       const breastplate = new THREE.Mesh(breastplateGeo, goldMat);
-      breastplate.position.set(0, 0.4, 0.2);
+      breastplate.position.set(0, 0.44, 0.04);
+      breastplate.rotation.y = -Math.PI / 2;
       fallbackGroup.add(breastplate);
 
       // Glowing Power Reactor Core
-      const coreGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.1, 10);
+      const coreGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.08, 8);
       coreGeo.rotateX(Math.PI / 2);
       const core = new THREE.Mesh(coreGeo, glowMat);
-      core.position.set(0, 0.45, 0.28);
+      core.position.set(0, 0.46, 0.24);
       fallbackGroup.add(core);
 
       if (theme.isMystic || theme.isLegendary) {
         // Twin Pulsating Exhaust Boilers with Aether Vents
-        const boilerGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.68, 8);
+        const boilerGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.52, 6);
         const leftBoiler = new THREE.Mesh(boilerGeo, metalMat);
-        leftBoiler.position.set(-0.2, 0.45, -0.3);
+        leftBoiler.position.set(-0.16, 0.42, -0.22);
         const rightBoiler = new THREE.Mesh(boilerGeo, metalMat);
-        rightBoiler.position.set(0.2, 0.45, -0.3);
+        rightBoiler.position.set(0.16, 0.42, -0.22);
 
-        const ventGeo = new THREE.BoxGeometry(0.08, 0.08, 0.12);
+        const ventGeo = new THREE.BoxGeometry(0.06, 0.06, 0.08);
         const leftVent = new THREE.Mesh(ventGeo, glowMat);
-        leftVent.position.set(-0.2, 0.72, -0.3);
+        leftVent.position.set(-0.16, 0.64, -0.22);
         const rightVent = new THREE.Mesh(ventGeo, glowMat);
-        rightVent.position.set(0.2, 0.72, -0.3);
+        rightVent.position.set(0.16, 0.64, -0.22);
 
         fallbackGroup.add(leftBoiler);
         fallbackGroup.add(rightBoiler);
@@ -754,14 +764,14 @@ export class ProceduralEquipmentVisuals {
           maxIntensity: 3.0,
         });
       } else if (variant === 0) {
-        const sashGeo = new THREE.BoxGeometry(0.32, 0.9, 0.06);
+        const sashGeo = new THREE.BoxGeometry(0.24, 0.65, 0.05);
         const sash = new THREE.Mesh(sashGeo, new THREE.MeshStandardMaterial({ color: theme.secondaryColor, roughness: 0.6 }));
-        sash.position.set(0, 0.25, 0.26);
+        sash.position.set(0, 0.28, 0.20);
         fallbackGroup.add(sash);
       } else {
-        const boilerGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.65, 8);
+        const boilerGeo = new THREE.CylinderGeometry(0.11, 0.11, 0.50, 8);
         const boiler = new THREE.Mesh(boilerGeo, glowMat);
-        boiler.position.set(0, 0.45, -0.3);
+        boiler.position.set(0, 0.40, -0.22);
         fallbackGroup.add(boiler);
       }
     });
@@ -803,46 +813,46 @@ export class ProceduralEquipmentVisuals {
         emissiveIntensity: theme.emissiveIntensity,
       });
 
-      // Upper Arms
-      const upperArmGeo = new THREE.BoxGeometry(0.24, 0.4, 0.24);
+      // Upper Arms - Tapered athletic limb
+      const upperArmGeo = new THREE.CylinderGeometry(0.11, 0.09, 0.36, 8);
       const leftUpperArm = new THREE.Mesh(upperArmGeo, secondaryMat);
-      leftUpperArm.position.set(0, -0.19, 0);
+      leftUpperArm.position.set(0, -0.18, 0);
       leftArmPivot.add(leftUpperArm);
 
       const rightUpperArm = new THREE.Mesh(upperArmGeo, secondaryMat);
-      rightUpperArm.position.set(0, -0.19, 0);
+      rightUpperArm.position.set(0, -0.18, 0);
       rightArmPivot.add(rightUpperArm);
 
-      // Forearms / Gauntlets
-      const forearmGeo = new THREE.BoxGeometry(0.24, 0.36, 0.24);
+      // Forearms / Gauntlets - Articulated Vambraces
+      const forearmGeo = new THREE.CylinderGeometry(0.12, 0.10, 0.32, 8);
       const leftForearm = new THREE.Mesh(forearmGeo, arms ? metalMat : secondaryMat);
-      leftForearm.position.set(0, -0.18, 0);
+      leftForearm.position.set(0, -0.16, 0);
       leftFallback.add(leftForearm);
 
       const rightForearm = new THREE.Mesh(forearmGeo, arms ? metalMat : secondaryMat);
-      rightForearm.position.set(0, -0.18, 0);
+      rightForearm.position.set(0, -0.16, 0);
       rightFallback.add(rightForearm);
 
       // Hands
       const handMat = arms ? metalMat : skinMat;
-      const handGeo = new THREE.BoxGeometry(0.16, 0.16, 0.16);
+      const handGeo = new THREE.BoxGeometry(0.12, 0.14, 0.12);
       const leftHand = new THREE.Mesh(handGeo, handMat);
-      leftHand.position.set(0, -0.38, 0);
+      leftHand.position.set(0, -0.34, 0);
       leftFallback.add(leftHand);
 
       const rightHand = new THREE.Mesh(handGeo, handMat);
-      rightHand.position.set(0, -0.38, 0);
+      rightHand.position.set(0, -0.34, 0);
       rightFallback.add(rightHand);
 
       if (arms && (theme.isMystic || theme.isLegendary)) {
-        const runeRingGeo = new THREE.TorusGeometry(0.16, 0.02, 6, 16);
+        const runeRingGeo = new THREE.TorusGeometry(0.12, 0.015, 6, 16);
         const leftRing = new THREE.Mesh(runeRingGeo, glowMat);
-        leftRing.position.set(0, -0.24, 0);
+        leftRing.position.set(0, -0.20, 0);
         leftRing.rotation.x = Math.PI / 2;
         leftFallback.add(leftRing);
 
         const rightRing = new THREE.Mesh(runeRingGeo, glowMat);
-        rightRing.position.set(0, -0.24, 0);
+        rightRing.position.set(0, -0.20, 0);
         rightRing.rotation.x = Math.PI / 2;
         rightFallback.add(rightRing);
 
@@ -895,44 +905,44 @@ export class ProceduralEquipmentVisuals {
         emissiveIntensity: theme.emissiveIntensity,
       });
 
-      // Thighs
-      const thighGeo = new THREE.BoxGeometry(0.26, 0.48, 0.28);
+      // Thighs - Tapered Cuisses
+      const thighGeo = new THREE.CylinderGeometry(0.14, 0.11, 0.44, 8);
       const leftThigh = new THREE.Mesh(thighGeo, secondaryMat);
-      leftThigh.position.set(0, -0.24, 0);
+      leftThigh.position.set(0, -0.22, 0);
       leftHipPivot.add(leftThigh);
 
       const rightThigh = new THREE.Mesh(thighGeo, secondaryMat);
-      rightThigh.position.set(0, -0.24, 0);
+      rightThigh.position.set(0, -0.22, 0);
       rightHipPivot.add(rightThigh);
 
-      // Shins / Greaves
-      const shinGeo = new THREE.BoxGeometry(0.25, 0.45, 0.27);
+      // Shins / Greaves - Sculpted anatomical greaves
+      const shinGeo = new THREE.CylinderGeometry(0.13, 0.10, 0.40, 8);
       const leftShin = new THREE.Mesh(shinGeo, legs ? metalMat : secondaryMat);
-      leftShin.position.set(0, -0.22, 0);
+      leftShin.position.set(0, -0.20, 0);
       leftFallback.add(leftShin);
 
       const rightShin = new THREE.Mesh(shinGeo, legs ? metalMat : secondaryMat);
-      rightShin.position.set(0, -0.22, 0);
+      rightShin.position.set(0, -0.20, 0);
       rightFallback.add(rightShin);
 
-      // Knee Guard Plates
-      const kneeCopGeo = new THREE.BoxGeometry(0.28, 0.16, 0.12);
+      // Knee Guard Poleyns
+      const kneeCopGeo = new THREE.BoxGeometry(0.18, 0.12, 0.10);
       const leftKnee = new THREE.Mesh(kneeCopGeo, legs ? goldMat : secondaryMat);
-      leftKnee.position.set(0, 0.02, 0.14);
+      leftKnee.position.set(0, 0.02, 0.10);
       leftFallback.add(leftKnee);
 
       const rightKnee = new THREE.Mesh(kneeCopGeo, legs ? goldMat : secondaryMat);
-      rightKnee.position.set(0, 0.02, 0.14);
+      rightKnee.position.set(0, 0.02, 0.10);
       rightFallback.add(rightKnee);
 
       if (legs && (theme.isMystic || theme.isLegendary)) {
-        const conduitGeo = new THREE.BoxGeometry(0.04, 0.35, 0.04);
+        const conduitGeo = new THREE.BoxGeometry(0.03, 0.28, 0.03);
         const leftConduit = new THREE.Mesh(conduitGeo, glowMat);
-        leftConduit.position.set(0, -0.22, 0.14);
+        leftConduit.position.set(0, -0.20, 0.11);
         leftFallback.add(leftConduit);
 
         const rightConduit = new THREE.Mesh(conduitGeo, glowMat);
-        rightConduit.position.set(0, -0.22, 0.14);
+        rightConduit.position.set(0, -0.20, 0.11);
         rightFallback.add(rightConduit);
       }
     });
@@ -960,15 +970,15 @@ export class ProceduralEquipmentVisuals {
       roughness: 0.8,
     });
 
-    const footGeo = new THREE.BoxGeometry(0.26, 0.16, 0.44);
+    const footGeo = new THREE.BoxGeometry(0.18, 0.12, 0.32);
     const leftFoot = new THREE.Mesh(footGeo, boots ? metalMat : secondaryMat);
     const rightFoot = new THREE.Mesh(footGeo, boots ? metalMat : secondaryMat);
 
     this.attachGlbOrProceduralPaired('boots', leftKneePivot, rightKneePivot, boots, (leftFallback, rightFallback) => {
-      leftFoot.position.set(0, -0.42, 0.09);
+      leftFoot.position.set(0, -0.40, 0.07);
       leftFallback.add(leftFoot);
 
-      rightFoot.position.set(0, -0.42, 0.09);
+      rightFoot.position.set(0, -0.40, 0.07);
       rightFallback.add(rightFoot);
     });
 

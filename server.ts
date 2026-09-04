@@ -554,6 +554,311 @@ Return a JSON object with:
     }
   });
 
+  // --- Guild Management, Shared Bank & Sovereign Kingdom Consolidation API ---
+  app.get('/api/guild', async (req, res) => {
+    try {
+      const guildId = (req.query.id as string) || 'guild_aether_guardians';
+      let guild = await mariaDB.getGuildData(guildId);
+      if (!guild) {
+        // Fallback to default guild if not yet saved
+        const { createDefaultGuildData } = await import('./src/data/defaultGuildData');
+        guild = createDefaultGuildData();
+        await mariaDB.saveGuildData(guild);
+      }
+      res.json({ success: true, guild });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/guild/save', async (req, res) => {
+    try {
+      const guildData = req.body;
+      const success = await mariaDB.saveGuildData(guildData);
+      res.json({ success });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Consolidate minimum 6 lands into a unified Kingdom under Guild Leadership
+  app.post('/api/guild/consolidate-kingdom', async (req, res) => {
+    try {
+      const { guildId = 'guild_aether_guardians', kingdomName, bannerIcon, bannerColor, chunkKeys, capitalChunkKey, rulerName } = req.body;
+      const result = await mariaDB.consolidateGuildKingdom(guildId, {
+        kingdomName: kingdomName || 'Großkönigreich von Aurion',
+        bannerIcon: bannerIcon || '👑',
+        bannerColor: bannerColor || '#00f0ff',
+        chunkKeys: chunkKeys || [],
+        capitalChunkKey: capitalChunkKey || '0,0',
+        rulerName: rulerName || 'Hero',
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  });
+
+  // Guild Bank: Deposit Gold
+  app.post('/api/guild/bank/deposit-gold', async (req, res) => {
+    const { guildId = 'guild_aether_guardians', amount, playerName = 'Hero' } = req.body;
+    const lockKey = `guild_transaction_${guildId}`;
+    if (!(await writeBehindBuffer.acquireLock(lockKey, 2000))) {
+      return res.status(409).json({ success: false, error: 'Treasury busy. Please try again.' });
+    }
+    
+    try {
+      const goldAmt = Math.max(0, parseInt(amount, 10) || 0);
+      let guild = await mariaDB.getGuildData(guildId);
+      if (!guild) {
+        const { createDefaultGuildData } = await import('./src/data/defaultGuildData');
+        guild = createDefaultGuildData();
+      }
+
+      guild.bank.treasuryGold += goldAmt;
+      guild.bank.logs.unshift({
+        id: 'log_' + Date.now(),
+        timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+        action: 'deposit_gold',
+        playerName,
+        details: `Hat ${goldAmt.toLocaleString()} Gold in die Gildenbank eingezahlt.`,
+      });
+
+      // Update goal progress if applicable
+      const bankGoal = guild.goals.find((g: any) => g.id === 'goal_treasury_fill');
+      if (bankGoal) {
+        bankGoal.currentProgress = guild.bank.treasuryGold;
+        if (bankGoal.currentProgress >= bankGoal.targetProgress) {
+          bankGoal.completed = true;
+        }
+      }
+
+      await mariaDB.saveGuildData(guild);
+      res.json({ success: true, treasuryGold: guild.bank.treasuryGold, guild });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    } finally {
+      writeBehindBuffer.releaseLock(lockKey);
+    }
+  });
+
+  // Guild Bank: Withdraw Gold
+  app.post('/api/guild/bank/withdraw-gold', async (req, res) => {
+    const { guildId = 'guild_aether_guardians', amount, playerName = 'Hero' } = req.body;
+    const lockKey = `guild_transaction_${guildId}`;
+    if (!(await writeBehindBuffer.acquireLock(lockKey, 2000))) {
+      return res.status(409).json({ success: false, error: 'Treasury busy. Please try again.' });
+    }
+    
+    try {
+      const goldAmt = Math.max(0, parseInt(amount, 10) || 0);
+      let guild = await mariaDB.getGuildData(guildId);
+      if (!guild) return res.status(404).json({ error: 'Gilde nicht gefunden' });
+
+      if (guild.bank.treasuryGold < goldAmt) {
+        return res.status(400).json({ error: 'Nicht genügend Gold in der Gilden-Schatzkammer' });
+      }
+
+      guild.bank.treasuryGold -= goldAmt;
+      guild.bank.logs.unshift({
+        id: 'log_' + Date.now(),
+        timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+        action: 'withdraw_gold',
+        playerName,
+        details: `Hat ${goldAmt.toLocaleString()} Gold aus der Schatzkammer entnommen.`,
+      });
+
+      await mariaDB.saveGuildData(guild);
+      res.json({ success: true, withdrawn: goldAmt, treasuryGold: guild.bank.treasuryGold, guild });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    } finally {
+      writeBehindBuffer.releaseLock(lockKey);
+    }
+  });
+
+  // Guild Bank: Deposit Item
+  app.post('/api/guild/bank/deposit-item', async (req, res) => {
+    const { guildId = 'guild_aether_guardians', item, playerName = 'Hero' } = req.body;
+    if (!item) return res.status(400).json({ error: 'Item data required' });
+    
+    const lockKey = `guild_transaction_${guildId}`;
+    if (!(await writeBehindBuffer.acquireLock(lockKey, 2000))) {
+      return res.status(409).json({ success: false, error: 'Vault busy. Please try again.' });
+    }
+
+    try {
+      let guild = await mariaDB.getGuildData(guildId);
+      if (!guild) {
+        const { createDefaultGuildData } = await import('./src/data/defaultGuildData');
+        guild = createDefaultGuildData();
+      }
+
+      if (guild.bank.items.length >= guild.bank.maxSlots) {
+        return res.status(400).json({ error: 'Gildenbank-Fächer sind voll!' });
+      }
+
+      const bankItem = {
+        id: 'gbank_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+        name: item.name,
+        rarity: item.rarity || 'common',
+        icon: item.icon || '📦',
+        type: item.slot || 'misc',
+        quantity: 1,
+        itemData: item,
+        depositedBy: playerName,
+        depositedAt: 'Gerade eben',
+      };
+
+      guild.bank.items.push(bankItem);
+      guild.bank.logs.unshift({
+        id: 'log_' + Date.now(),
+        timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+        action: 'deposit_item',
+        playerName,
+        details: `Hat [${item.name}] in das Gilden-Tresorfach gelegt.`,
+      });
+
+      await mariaDB.saveGuildData(guild);
+      res.json({ success: true, item: bankItem, guild });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    } finally {
+      writeBehindBuffer.releaseLock(lockKey);
+    }
+  });
+
+  // Guild Bank: Withdraw Item
+  app.post('/api/guild/bank/withdraw-item', async (req, res) => {
+    const { guildId = 'guild_aether_guardians', itemId, playerName = 'Hero' } = req.body;
+    const lockKey = `guild_transaction_${guildId}`;
+    if (!(await writeBehindBuffer.acquireLock(lockKey, 2000))) {
+      return res.status(409).json({ success: false, error: 'Vault busy. Please try again.' });
+    }
+    
+    try {
+      let guild = await mariaDB.getGuildData(guildId);
+      if (!guild) return res.status(404).json({ error: 'Gilde nicht gefunden' });
+
+      const idx = guild.bank.items.findIndex((i: any) => i.id === itemId);
+      if (idx === -1) return res.status(404).json({ error: 'Item im Tresorfach nicht gefunden' });
+
+      const [removedItem] = guild.bank.items.splice(idx, 1);
+      guild.bank.logs.unshift({
+        id: 'log_' + Date.now(),
+        timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+        action: 'withdraw_item',
+        playerName,
+        details: `Hat [${removedItem.name}] aus dem Tresorfach entnommen.`,
+      });
+
+      await mariaDB.saveGuildData(guild);
+      res.json({ success: true, item: removedItem, guild });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    } finally {
+      writeBehindBuffer.releaseLock(lockKey);
+    }
+  });
+
+  // Kingdom Building Upgrade
+  app.post('/api/guild/kingdom/upgrade-building', async (req, res) => {
+    const { guildId = 'guild_aether_guardians', buildingId, playerName = 'Hero' } = req.body;
+    const lockKey = `guild_transaction_${guildId}`;
+    if (!(await writeBehindBuffer.acquireLock(lockKey, 2000))) {
+      return res.status(409).json({ success: false, error: 'Kingdom management is busy. Please try again.' });
+    }
+    
+    try {
+      let guild = await mariaDB.getGuildData(guildId);
+      if (!guild || !guild.kingdom) {
+        return res.status(400).json({ error: 'Kein aktives Königreich vorhanden. Bitte zuerst Gebiete vereinen!' });
+      }
+
+      const building = guild.kingdom.buildings.find((b: any) => b.id === buildingId);
+      if (!building) return res.status(404).json({ error: 'Gebäude nicht gefunden' });
+
+      if (building.level >= building.maxLevel) {
+        return res.status(400).json({ error: 'Dieses Gebäude hat bereits die Maximalstufe erreicht.' });
+      }
+
+      // Check resources
+      const cost = building.cost;
+      if (guild.bank.treasuryGold < cost.gold) {
+        return res.status(400).json({ error: `Nicht genügend Gold in der Gildenbank (${guild.bank.treasuryGold}/${cost.gold})` });
+      }
+      if (guild.kingdom.resources.wood < cost.wood || guild.kingdom.resources.stone < cost.stone || guild.kingdom.resources.aether < cost.aether) {
+        return res.status(400).json({ error: 'Nicht genügend Königreich-Ressourcen vorhanden.' });
+      }
+
+      // Deduct resources
+      guild.bank.treasuryGold -= cost.gold;
+      guild.kingdom.resources.wood -= cost.wood;
+      guild.kingdom.resources.stone -= cost.stone;
+      guild.kingdom.resources.aether -= cost.aether;
+
+      // Upgrade building
+      building.level += 1;
+      building.built = true;
+
+      // Scale cost for next tier
+      building.cost = {
+        gold: Math.round(cost.gold * 1.5),
+        wood: Math.round(cost.wood * 1.4),
+        stone: Math.round(cost.stone * 1.4),
+        aether: Math.round(cost.aether * 1.6),
+      };
+
+      // Kingdom bonuses increase
+      guild.kingdom.defenseRating += 25;
+      guild.kingdom.passiveIncomeGoldPerHour += 50;
+
+      guild.bank.logs.unshift({
+        id: 'log_' + Date.now(),
+        timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+        action: 'kingdom_upgrade',
+        playerName,
+        details: `Hat [${building.name}] auf Stufe ${building.level} ausgebaut!`,
+      });
+
+      await mariaDB.saveGuildData(guild);
+      res.json({ success: true, building, kingdom: guild.kingdom, guild });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    } finally {
+      writeBehindBuffer.releaseLock(lockKey);
+    }
+  });
+
+  // Kingdom Resource Donation
+  app.post('/api/guild/kingdom/donate-resources', async (req, res) => {
+    try {
+      const { guildId = 'guild_aether_guardians', resources, playerName = 'Hero' } = req.body;
+      let guild = await mariaDB.getGuildData(guildId);
+      if (!guild) return res.status(404).json({ error: 'Gilde nicht gefunden' });
+
+      if (guild.kingdom) {
+        if (resources.wood) guild.kingdom.resources.wood += resources.wood;
+        if (resources.stone) guild.kingdom.resources.stone += resources.stone;
+        if (resources.aether) guild.kingdom.resources.aether += resources.aether;
+        if (resources.crops) guild.kingdom.resources.crops += resources.crops;
+      }
+
+      guild.bank.logs.unshift({
+        id: 'log_' + Date.now(),
+        timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+        action: 'donate_resource',
+        playerName,
+        details: `Hat Ressourcen gespendet (Holz: +${resources.wood || 0}, Stein: +${resources.stone || 0}, Äther: +${resources.aether || 0}).`,
+      });
+
+      await mariaDB.saveGuildData(guild);
+      res.json({ success: true, kingdom: guild.kingdom, guild });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Vite Middleware Setup
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

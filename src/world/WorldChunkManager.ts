@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BiomeType, LandmarkType, SolidObstacle, WorldChunkData, WorldExpansionStats } from '../types';
+import { BiomeType, LandmarkType, SolidObstacle, SolidObstacleType, WorldChunkData, WorldExpansionStats } from '../types';
 import { collisionSystem } from './WorldCollisionSystem';
 
 export class WorldChunkManager {
@@ -205,6 +205,10 @@ export class WorldChunkManager {
         }
       }
     }
+  }
+
+  public getChunk(chunkKey: string): WorldChunkData | undefined {
+    return this.chunks.get(chunkKey);
   }
 
   /**
@@ -682,11 +686,29 @@ export class WorldChunkManager {
         pillarGroup.add(flag);
 
         group.add(pillarGroup);
-      } else if (obs.type === 'wall') {
+      } else if (obs.type === 'wall' || obs.type === 'homestead_wall') {
         const wallGeo = new THREE.BoxGeometry(obs.radius * 2, obs.height || 4.5, 2.0);
         const wall = new THREE.Mesh(wallGeo, stoneWallMat);
         wall.position.set(localX, (obs.height || 4.5) / 2, localZ);
         group.add(wall);
+      } else if (obs.type === 'homestead_building') {
+        const bldgGroup = new THREE.Group();
+        bldgGroup.position.set(localX, 0, localZ);
+        
+        // Wood/Stone Walls
+        const wallGeo = new THREE.BoxGeometry(obs.radius * 2, obs.height || 5.0, obs.radius * 2);
+        const wall = new THREE.Mesh(wallGeo, woodTrunkMat); // Using wood material for homesteads
+        wall.position.y = (obs.height || 5.0) / 2;
+        bldgGroup.add(wall);
+        
+        // Roof
+        const roofGeo = new THREE.ConeGeometry(obs.radius * 1.5, 3.0, 4);
+        roofGeo.rotateY(Math.PI / 4);
+        const roof = new THREE.Mesh(roofGeo, honeyStoneMat);
+        roof.position.y = (obs.height || 5.0) + 1.5;
+        bldgGroup.add(roof);
+        
+        group.add(bldgGroup);
       } else {
         // Rock / Mound / Boulder
         const rockGeo = new THREE.DodecahedronGeometry(obs.radius, 1);
@@ -744,5 +766,80 @@ export class WorldChunkManager {
       currentKingdom: currentChunk?.kingdom || this.currentKingdom,
       currentLandmark: currentChunk?.landmarkName || 'Unkartiertes Grenzland',
     };
+  }
+
+  public getAllChunks(): WorldChunkData[] {
+    return Array.from(this.chunks.values());
+  }
+
+  public getExpansionStats(playerX: number = 0, playerZ: number = 0): WorldExpansionStats {
+    return this.getWorldStats(playerX, playerZ);
+  }
+
+  /**
+   * Places a new homestead structure into the persistent world.
+   */
+  public placeHomesteadStructure(
+    x: number,
+    z: number,
+    blueprintId: string,
+    ownerId: string
+  ): void {
+    const cx = Math.round(x / this.chunkSize);
+    const cz = Math.round(z / this.chunkSize);
+    const chunkKey = `${cx},${cz}`;
+    const chunk = this.chunks.get(chunkKey);
+    
+    if (!chunk) {
+      console.warn('Cannot place structure in unloaded chunk', chunkKey);
+      return;
+    }
+
+    let type: SolidObstacleType = 'homestead_building';
+    let radius = 4.0;
+    let height = 5.0;
+
+    if (blueprintId === 'house_t1') {
+      radius = 4.0;
+      height = 5.0;
+    } else if (blueprintId === 'house_t2') {
+      radius = 5.5;
+      height = 7.0;
+    } else if (blueprintId === 'house_t3') {
+      radius = 7.0;
+      height = 9.0;
+    } else if (blueprintId === 'wall_t1' || blueprintId === 'wall_t2') {
+      type = 'homestead_wall';
+      radius = 3.0;
+      height = 3.5;
+    }
+
+    const obs: SolidObstacle = {
+      id: `homestead_${blueprintId}_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      type,
+      x,
+      z,
+      radius,
+      height,
+      name: `Gebäude von ${ownerId}`,
+      chunkKey,
+    };
+
+    chunk.obstacles.push(obs);
+    
+    // Register in physics
+    collisionSystem.registerObstacles([obs]);
+    
+    // Re-render the chunk (force recreate for now)
+    const oldMesh = this.chunkMeshes.get(chunkKey);
+    if (oldMesh) {
+      this.group.remove(oldMesh);
+      this.chunkMeshes.delete(chunkKey);
+    }
+    
+    this.renderChunkMeshes(chunk);
+    
+    // Persist
+    this.persistChunk(chunk);
   }
 }

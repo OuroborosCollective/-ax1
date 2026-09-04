@@ -41,6 +41,8 @@ class InMemoryStore {
   glbCatalog: Map<string, any> = new Map();
   worldChunks: Map<string, any> = new Map();
   worldSnapshots: any[] = [];
+  chunkPolitics: Map<string, any> = new Map();
+  guilds: Map<string, any> = new Map();
   logs: any[] = [];
 }
 
@@ -351,6 +353,19 @@ class MariaDBService {
         \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX \`idx_snap_seq\` (\`sequence_id\`),
         INDEX \`idx_snap_time\` (\`timestamp\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+      // 11. Guild Management, Alliances & Consolidated Kingdoms
+      `CREATE TABLE IF NOT EXISTS \`aurion_guilds\` (
+        \`guild_id\` VARCHAR(64) NOT NULL PRIMARY KEY,
+        \`guild_name\` VARCHAR(128) NOT NULL,
+        \`guild_tag\` VARCHAR(16) NOT NULL,
+        \`motd\` TEXT,
+        \`level\` INT NOT NULL DEFAULT 1,
+        \`xp\` INT NOT NULL DEFAULT 0,
+        \`guild_data_json\` LONGTEXT NOT NULL,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_guild_name\` (\`guild_name\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
     ];
 
@@ -946,6 +961,11 @@ class MariaDBService {
         console.error('Failed to get chunk politics from MariaDB:', err);
       }
     }
+
+    if (this.inMemory.chunkPolitics.has(chunkKey)) {
+      return this.inMemory.chunkPolitics.get(chunkKey);
+    }
+
     // Default fallback if not found or no DB
     return {
       chunkKey,
@@ -961,6 +981,12 @@ class MariaDBService {
   }
 
   public async saveChunkPolitics(chunkKey: string, politicsData: any): Promise<boolean> {
+    this.inMemory.chunkPolitics.set(chunkKey, {
+      chunkKey,
+      ...politicsData,
+      updatedAt: new Date().toISOString(),
+    });
+
     if (this.isConnected && this.pool) {
       try {
         await this.pool.query(
@@ -991,7 +1017,236 @@ class MariaDBService {
         console.error('Save chunk politics to MariaDB failed:', err);
       }
     }
-    return false;
+    return true;
+  }
+
+  // --- Guild & Sovereign Kingdom Management ---
+  public async getGuildData(guildId: string = 'guild_aether_guardians'): Promise<any> {
+    if (this.isConnected && this.pool) {
+      try {
+        const [rows] = await this.pool.query<any[]>('SELECT * FROM `aurion_guilds` WHERE `guild_id` = ?', [guildId]);
+        if (Array.isArray(rows) && rows.length > 0) {
+          const r = rows[0];
+          return typeof r.guild_data_json === 'string' ? JSON.parse(r.guild_data_json) : r.guild_data_json;
+        }
+      } catch (err) {
+        console.error('Failed to get guild data from MariaDB:', err);
+      }
+    }
+
+    if (this.inMemory.guilds.has(guildId)) {
+      return this.inMemory.guilds.get(guildId);
+    }
+
+    return null;
+  }
+
+  public async saveGuildData(guildData: any): Promise<boolean> {
+    const guildId = guildData.id || 'guild_aether_guardians';
+    this.inMemory.guilds.set(guildId, guildData);
+
+    if (this.isConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO \`aurion_guilds\`
+           (\`guild_id\`, \`guild_name\`, \`guild_tag\`, \`motd\`, \`level\`, \`xp\`, \`guild_data_json\`)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             \`guild_name\` = VALUES(\`guild_name\`),
+             \`guild_tag\` = VALUES(\`guild_tag\`),
+             \`motd\` = VALUES(\`motd\`),
+             \`level\` = VALUES(\`level\`),
+             \`xp\` = VALUES(\`xp\`),
+             \`guild_data_json\` = VALUES(\`guild_data_json\`)`,
+          [
+            guildId,
+            guildData.name || 'Orden der Äther-Wächter',
+            guildData.tag || '[AURA]',
+            guildData.motd || '',
+            guildData.level || 1,
+            guildData.xp || 0,
+            JSON.stringify(guildData),
+          ]
+        );
+        return true;
+      } catch (err) {
+        console.error('Save guild data to MariaDB failed:', err);
+      }
+    }
+    return true;
+  }
+
+  public async consolidateGuildKingdom(
+    guildId: string,
+    payload: {
+      kingdomName: string;
+      bannerIcon: string;
+      bannerColor: string;
+      chunkKeys: string[];
+      capitalChunkKey: string;
+      rulerName: string;
+    }
+  ): Promise<{ success: boolean; kingdom: any; mergedChunks: string[]; message: string }> {
+    const { kingdomName, bannerIcon, bannerColor, chunkKeys, capitalChunkKey, rulerName } = payload;
+    if (!chunkKeys || chunkKeys.length < 6) {
+      throw new Error('Mindestens 6 kontrollierte Gebiete sind erforderlich, um ein gemeinsames Königreich zu gründen.');
+    }
+
+    // 1. Update all merged chunks' kingdom in world chunks and chunk politics
+    for (const chunkKey of chunkKeys) {
+      // In-memory world chunks update
+      if (this.inMemory.worldChunks.has(chunkKey)) {
+        const c = this.inMemory.worldChunks.get(chunkKey);
+        c.kingdom = kingdomName;
+      }
+
+      // In-memory chunk politics update
+      const curPol = await this.getChunkPolitics(chunkKey);
+      await this.saveChunkPolitics(chunkKey, {
+        ...curPol,
+        ownerId: guildId,
+        ownerName: `${kingdomName} (Gildenleitung)`,
+        stability: 100,
+        guardCount: Math.max(curPol.guardCount || 0, 4),
+      });
+
+      // MariaDB DB update if connected
+      if (this.isConnected && this.pool) {
+        try {
+          await this.pool.query('UPDATE `aurion_world_chunks` SET `kingdom` = ? WHERE `chunk_key` = ?', [kingdomName, chunkKey]);
+          await this.pool.query(
+            'UPDATE `aurion_chunk_politics` SET `owner_id` = ?, `owner_name` = ?, `stability` = 100, `guard_count` = GREATEST(`guard_count`, 4) WHERE `chunk_key` = ?',
+            [guildId, `${kingdomName} (Gildenleitung)`, chunkKey]
+          );
+        } catch (e) {
+          console.error(`Error updating chunk ${chunkKey} for kingdom consolidation:`, e);
+        }
+      }
+    }
+
+    // 2. Fetch or initialize guild data and attach kingdom
+    let guild = await this.getGuildData(guildId);
+    if (!guild) {
+      guild = {
+        id: guildId,
+        name: 'Orden der Äther-Wächter',
+        tag: '[AURA]',
+        level: 4,
+        xp: 4250,
+      };
+    }
+
+    const totalAreaSqMeters = chunkKeys.length * 6400; // 80x80m per chunk
+    const kingdomObj = {
+      id: 'kingdom_' + Date.now(),
+      name: kingdomName,
+      bannerIcon: bannerIcon || '👑',
+      bannerColor: bannerColor || '#00f0ff',
+      capitalChunkKey,
+      capitalLandmarkName: 'Aethelgard Sanctum',
+      mergedChunkKeys: chunkKeys,
+      totalTerritoryAreaSqMeters: totalAreaSqMeters,
+      establishedAt: new Date().toLocaleDateString('de-DE'),
+      rulerName: rulerName || 'Hero',
+      rulerRole: 'Großkönig & Gildenmeister',
+      kingdomLevel: 1,
+      buildings: [
+        {
+          id: 'bld_citadel',
+          name: 'Königliche Zitadelle',
+          germanName: 'Königliche Zitadelle von Aurion',
+          level: 1,
+          maxLevel: 5,
+          cost: { gold: 1200, wood: 250, stone: 300, aether: 100 },
+          description: 'Das Herzstück der Souveränität. Festigt den Thronsitz der Gildenleitung, gewährt allen Mitgliedern +15% maximale Lebenspunkte und zieht königliche Abgaben ein.',
+          perk: '+15% Max HP für Gildenmitglieder & +150 Gold/h Steuerertrag',
+          icon: '🏰',
+          built: true,
+        },
+        {
+          id: 'bld_turquoise_wall',
+          name: 'Arkaner Türkis-Schutzwall',
+          germanName: 'Arkaner Türkis-Schutzwall',
+          level: 1,
+          maxLevel: 5,
+          cost: { gold: 1800, wood: 400, stone: 600, aether: 250 },
+          description: 'Eine gewaltige Ringmauer aus sonnenverstärktem Bruchstein mit pulsenden Aurion-Türkis Aetheradern. Entsendet schwere Territoriumswachen in alle vereinten Gebiete.',
+          perk: '+12 Rüstung, 4 zusätzliche Königswachen pro vereintem Gebiet',
+          icon: '🛡️',
+          built: false,
+        },
+        {
+          id: 'bld_grand_bazaar',
+          name: 'Großer Handelsmarkt & Kornspeicher',
+          germanName: 'Großer Handelsmarkt & Kornspeicher',
+          level: 0,
+          maxLevel: 5,
+          cost: { gold: 1500, wood: 350, stone: 300, aether: 150 },
+          description: 'Errichtet geschäftige Marktarkaden für reisende Händler und NPCs. Steigert Handwerkseinnahmen und generiert passive Nahrungslieferungen für die Bevölkerung.',
+          perk: '+25% Goldwert beim Händlerverkauf & +100 Nahrung/Tag',
+          icon: '⚖️',
+          built: false,
+        },
+        {
+          id: 'bld_sovereign_academy',
+          name: 'Königliche Akademie der Wissenschaften',
+          germanName: 'Königliche Akademie der Wissenschaften',
+          level: 0,
+          maxLevel: 5,
+          cost: { gold: 2200, wood: 500, stone: 450, aether: 350 },
+          description: 'Eine ehrwürdige Forschungsstätte für arkanes Handwerk, Waffentechnik und Leitsysteme. Erhöht die gewonnene Erfahrung bei allen Aktivitäten.',
+          perk: '+20% XP-Bonus für alle Gildenmitglieder bei Quests & Monstern',
+          icon: '📜',
+          built: false,
+        },
+        {
+          id: 'bld_aether_wellspring',
+          name: 'Aetherium-Brunnenanlage',
+          germanName: 'Aetherium-Brunnenanlage',
+          level: 0,
+          maxLevel: 5,
+          cost: { gold: 3000, wood: 600, stone: 700, aether: 500 },
+          description: 'Bohrt bis in die tiefsten Leey-Linien des Aurion-Plateaus. Versorgt das gesamte Königreich mit unerschöpflicher Türkis-Aetherenergie und maximaler territorialer Stabilität.',
+          perk: '+50% Ressourcen-Regeneration (Dampf, Mana, Energie) & 100% Gebietsstabilität',
+          icon: '💎',
+          built: false,
+        },
+      ],
+      resources: {
+        wood: 1420,
+        stone: 1350,
+        aether: 880,
+        crops: 950,
+      },
+      defenseRating: 120,
+      stabilityRating: 100,
+      passiveIncomeGoldPerHour: 150,
+      sovereignBuffs: [
+        'Souveränes Territorium: +15% Max HP für alle Gildenmitglieder',
+        'Königswachen-Präsenz in allen 6+ vereinten Gebieten',
+        'Gemeinsame Gildenleitung über 38.400+ m²',
+      ],
+    };
+
+    guild.kingdom = kingdomObj;
+    if (guild.bank && Array.isArray(guild.bank.logs)) {
+      guild.bank.logs.unshift({
+        id: 'log_' + Date.now(),
+        timestamp: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+        action: 'kingdom_upgrade',
+        playerName: rulerName || 'Hero',
+        details: `Hat ${chunkKeys.length} Länder zu '${kingdomName}' unter Gildenleitung zusammengefügt!`,
+      });
+    }
+
+    await this.saveGuildData(guild);
+
+    return {
+      success: true,
+      kingdom: kingdomObj,
+      mergedChunks: chunkKeys,
+      message: `Erfolgreich! ${chunkKeys.length} Gebiete (${totalAreaSqMeters.toLocaleString()} m²) wurden zum vereinten Königreich '${kingdomName}' unter der Gildenleitung zusammengeschlossen.`,
+    };
   }
 
   public async getStatus(): Promise<MariaDBStatus> {

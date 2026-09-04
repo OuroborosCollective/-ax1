@@ -17,12 +17,134 @@ export type ItemSlot =
   | 'shoulders'
   | 'chest'
   | 'arms'
+  | 'gloves'
   | 'legs'
   | 'boots'
   | 'shoes'
   | 'relic'
+  | 'ring'
+  | 'amulet'
   | 'mount'
-  | 'consumable';
+  | 'consumable'
+  | 'material'
+  | 'tool'
+  | 'furniture';
+
+// --- Handwerk & Berufe System Types ---
+export type CraftingProfessionId =
+  | 'blacksmith'     // Schmied
+  | 'alchemist'      // Alchemist
+  | 'tailor'         // Schneider
+  | 'leatherworker'  // Ledermeister
+  | 'carpenter';     // Tischler
+
+export type GatheringProfessionId =
+  | 'woodcutter'     // Holzfäller
+  | 'miner'          // Bergbauer
+  | 'farmer'         // Bauer
+  | 'herbalist'      // Kräuterkundler
+  | 'enchanter'      // Verzauberung
+  | 'fisherman'      // Fischer
+  | 'hunter'         // Jäger
+  | 'democrat'       // Demokrat (Staatsbürger / Volkstribun)
+  | 'steward';       // Landesverwalter (Gouverneur / Vogt)
+
+export type ProfessionId = CraftingProfessionId | GatheringProfessionId;
+
+export interface ProfessionSkill {
+  id: ProfessionId;
+  name: string;
+  germanName: string;
+  category: 'crafting' | 'gathering' | 'civic';
+  icon: string;
+  color: string;
+  description: string;
+  level: number;
+  xp: number;
+  maxXp: number;
+  totalCraftedOrGathered: number;
+  passiveBonus: string;
+}
+
+export interface CraftingRecipeIngredient {
+  itemId: string;
+  name: string;
+  icon: string;
+  quantity: number;
+}
+
+export interface CraftingRecipe {
+  id: string;
+  name: string;
+  germanName: string;
+  professionId: CraftingProfessionId;
+  requiredLevel: number;
+  xpReward: number;
+  craftTimeSeconds: number;
+  outputItemId: string;
+  outputQuantity: number;
+  outputItem: RPGItem;
+  ingredients: CraftingRecipeIngredient[];
+  description: string;
+  category: string;
+  icon: string;
+  rarity: ItemRarity;
+  goldCost?: number;
+}
+
+// --- Dungeon Finder System Types ---
+export interface DungeonDefinition {
+  id: string;
+  name: string;
+  germanName: string;
+  description: string;
+  zone: string;
+  levelReq: number;
+  recommendedIlvl: number;
+  bossCount: number;
+  bosses: string[];
+  bannerGradient: string;
+  icon: string;
+  rewards: { xp: number; gold: number; gearRarity: ItemRarity };
+  rolesNeeded: { tanks: number; healers: number; dps: number };
+}
+
+export interface DungeonQueueState {
+  dungeonId: string | null;
+  selectedRole: 'tank' | 'healer' | 'dps';
+  status: 'idle' | 'queuing' | 'group_found' | 'in_dungeon';
+  queueStartTime: number | null;
+  elapsedSeconds: number;
+  matchedParty: {
+    tank: string | null;
+    healer: string | null;
+    dps: string[];
+  };
+}
+
+// --- Lore & Storyline Chronicles Types ---
+export interface LoreChapter {
+  id: string;
+  title: string;
+  germanTitle: string;
+  era: string;
+  description: string;
+  unlocked: boolean;
+  requiredCompletedQuests: string[];
+  icon: string;
+  bannerColor: string;
+}
+
+export interface LoreEntry {
+  id: string;
+  chapterId: string;
+  title: string;
+  author: string;
+  excerpt: string;
+  fullText: string;
+  unlockedAt?: string;
+  rewardClaimed?: boolean;
+}
 
 export interface CharacterAttributes {
   strength: number;     // Physical damage & heavy crit bonus
@@ -72,6 +194,7 @@ export interface RPGItem {
   weaponType?: WeaponType;
   levelReq: number;
   classReq?: CharacterClassId;
+  quantity?: number;
   stats: {
     attack?: number;
     spellPower?: number;
@@ -80,6 +203,7 @@ export interface RPGItem {
     maxResource?: number;
     critChance?: number; // %
     moveSpeed?: number;  // %
+    dodgeChance?: number; // %
   };
   valueGold: number;
   effectDescription?: string;
@@ -171,6 +295,8 @@ export interface PlayerStats {
   ascensionPoints: number; // Transcendent celestial resonance points to allocate
   ascensionTalents: Record<string, number>;
   prestigeTitle: string;
+  // Handwerk & Berufe Progression
+  professions?: Record<ProfessionId, ProfessionSkill>;
 }
 
 export type EntityFsmState = 'idle' | 'patrolling' | 'combat' | 'fleeing' | 'evading' | 'dead';
@@ -197,10 +323,13 @@ export interface EquipmentState {
   shoulders: RPGItem | null;
   chest: RPGItem | null;
   arms: RPGItem | null;
+  gloves?: RPGItem | null;
   legs: RPGItem | null;
   boots: RPGItem | null;
   shoes?: RPGItem | null;
   relic: RPGItem | null;
+  ring?: RPGItem | null;
+  amulet?: RPGItem | null;
   mount: RPGItem | null;
 }
 
@@ -244,6 +373,7 @@ export interface WorldMobEntity {
   castProgress?: number; // for boss telegraphed skills
   castSkillName?: string;
   fsmState?: EntityFsmState;
+  aggroTable?: Record<string, number>; // Maps entity ID (player/party) to aggro amount
 }
 
 export interface SimulatedPlayer {
@@ -258,6 +388,15 @@ export interface SimulatedPlayer {
   targetMobId?: string;
   action: 'patrolling' | 'fighting' | 'resting' | 'riding';
   guildTag: string;
+  avatarIcon?: string;
+  role?: 'tank' | 'healer' | 'dps';
+  hp?: number;
+  maxHp?: number;
+  resource?: number;
+  maxResource?: number;
+  isLeader?: boolean;
+  inCombat?: boolean;
+  zone?: string;
 }
 
 export interface PartyMember {
@@ -277,6 +416,8 @@ export interface PartyMember {
   zone: string;
   isOnline: boolean;
   dps: number;
+  isPlayer?: boolean;
+  inCombat?: boolean;
 }
 
 export interface DayNightInfo {
@@ -306,6 +447,10 @@ export interface Quest {
   completed: boolean;
   type: 'kill_mobs' | 'kill_boss' | 'collect_loot' | 'explore_zone' | 'level_up' | 'tame_pet' | 'build_house';
   targetMobType?: string;
+  loreChapter?: 'sonnen_spitze' | 'aschen_gewoelbe' | 'windhaine' | 'aethelgard_krieg' | 'reichs_chronik';
+  chapterName?: string;
+  chronicleSummary?: string;
+  completedAt?: string;
 }
 
 export type NPCRole =
@@ -317,8 +462,37 @@ export type NPCRole =
   | 'homestead_architect'
   | 'outlaw_informant'
   | 'tavern_keeper'
+  | 'auktionator'
+  | 'auctioneer'
   | 'Territory Envoy'
   | 'Guard';
+
+export interface WorldBossRecord {
+  id: string;
+  name: string;
+  title: string;
+  zone: string;
+  level: number;
+  maxHp: number;
+  icon: string;
+  color: string;
+  coords: { x: number; z: number };
+  respawnIntervalSec: number;
+  lastDefeatedTimestamp: number | null; // epoch ms or null if never defeated / alive
+  defeatCount: number;
+  lastSlayerName?: string;
+  rareDrops: string[];
+  status: 'alive' | 'respawning' | 'dormant';
+}
+
+export interface SoldBuybackItem {
+  id: string;
+  item: RPGItem;
+  soldPrice: number;
+  soldAtTimestamp: number;
+  soldToNpcId?: string;
+  soldToHubId?: string;
+}
 
 export interface NPCRelationshipMemory {
   reputation: number; // -100 (Hostile / Criminal) to +100 (Exalted Hero)
@@ -444,7 +618,9 @@ export type SolidObstacleType =
   | 'fountain'
   | 'streetlamp'
   | 'border_stone'
-  | 'ruin_pillar';
+  | 'ruin_pillar'
+  | 'homestead_building'
+  | 'homestead_wall';
 
 export interface SolidObstacle {
   id: string;
@@ -552,5 +728,7 @@ export interface EnginePerformanceMetrics {
     nextSnapshotInSec: number;
   };
 }
+
+export * from './types/guild';
 
 

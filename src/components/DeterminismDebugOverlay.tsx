@@ -607,13 +607,11 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
                             <div className="flex justify-between items-center">
                               <span className="font-bold text-amber-100">{npc.name}</span>
                               <span className={`px-1.5 py-0.2 rounded font-mono text-[9px] border ${
-                                leadership.socialStanding === 'EXALTED' || leadership.socialStanding === 'RESPECTED'
+                                leadership.socialStanding === 'EXALTED' || leadership.socialStanding === 'HONORED' || leadership.socialStanding === 'RESPECTED'
                                   ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40'
-                                  : leadership.socialStanding === 'GOOD'
+                                  : leadership.socialStanding === 'NEUTRAL'
                                   ? 'bg-cyan-950/60 text-cyan-300 border-cyan-500/40'
-                                  : leadership.socialStanding === 'BAD' || leadership.socialStanding === 'EXILED'
-                                  ? 'bg-rose-950/60 text-rose-300 border-rose-500/40'
-                                  : 'bg-gray-900 text-gray-300 border-gray-700'
+                                  : 'bg-rose-950/60 text-rose-300 border-rose-500/40'
                               }`}>
                                 Standing: {leadership.socialStanding} ({leadership.reputationScore > 0 ? `+${leadership.reputationScore}` : leadership.reputationScore})
                               </span>
@@ -639,7 +637,7 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
                                 ) : (
                                   enemies.slice(0, 2).map((e, idx) => (
                                     <div key={idx} className="text-rose-200 truncate">
-                                      ⚔️ {e.enemyName} <span className="text-rose-400 font-mono">({e.dangerLevel} Dmg)</span>
+                                      ⚔️ {e.name} <span className="text-rose-400 font-mono">({e.threatLevel} Threat)</span>
                                     </div>
                                   ))
                                 )}
@@ -653,7 +651,7 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
                                 ) : (
                                   tradePoints.slice(0, 2).map((t, idx) => (
                                     <div key={idx} className="text-emerald-200 truncate">
-                                      💰 {t.hubName} <span className="text-amber-300 font-mono">({Math.round(t.avgProfitCopper)} Cu)</span>
+                                      💰 {t.hubName} <span className="text-amber-300 font-mono">({Math.round(t.bestProfitCopper)} Cu)</span>
                                     </div>
                                   ))
                                 )}
@@ -667,7 +665,7 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
                                 ) : (
                                   resourceSpots.slice(0, 2).map((r, idx) => (
                                     <div key={idx} className="text-cyan-200 truncate">
-                                      ⛏️ {r.depositName} <span className="text-cyan-400 font-mono">({r.yieldRating.toFixed(1)}x)</span>
+                                      ⛏️ {r.resourceName} <span className="text-cyan-400 font-mono">({r.yieldRating.toFixed(1)}x)</span>
                                     </div>
                                   ))
                                 )}

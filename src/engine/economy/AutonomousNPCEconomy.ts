@@ -132,6 +132,9 @@ export class AutonomousNPCEconomy {
   public npcs: AutonomousNPC[] = [];
   public hubs: Map<string, RegionalMarketHub> = new Map();
   public currentTick: number = 0;
+  public get tickCount(): number {
+    return this.currentTick;
+  }
   public totalBirths: number = 0;
   public totalDeaths: number = 0;
   public totalTradeVolumeCopper: number = 0;

@@ -614,42 +614,43 @@ export class OpenWorldPlayer {
     gorgetMesh.position.set(0, 0.74, 0.02);
     this.torsoGroup.add(gorgetMesh);
 
-    // Base Cranium & Head Shape
-    const headGeo = new THREE.BoxGeometry(0.44, 0.48, 0.44);
+    // Base Cranium & Head Shape - Stylized octagonal cranium
+    const headGeo = new THREE.CylinderGeometry(0.20, 0.18, 0.40, 8);
     const headMesh = new THREE.Mesh(headGeo, skinMat);
+    headMesh.position.set(0, 0.02, 0.02);
     this.headGroup.add(headMesh);
 
     // Sculpted Jaw & Chin
-    const jawGeo = new THREE.BoxGeometry(0.32, 0.18, 0.22);
+    const jawGeo = new THREE.BoxGeometry(0.26, 0.14, 0.18);
     const jawMesh = new THREE.Mesh(jawGeo, skinMat);
-    jawMesh.position.set(0, -0.16, 0.16);
+    jawMesh.position.set(0, -0.14, 0.12);
     this.headGroup.add(jawMesh);
 
     // Piercing Aurion-Türkis Glowing Eyes
-    const eyeGeo = new THREE.BoxGeometry(0.09, 0.045, 0.03);
+    const eyeGeo = new THREE.BoxGeometry(0.07, 0.035, 0.03);
     const leftEye = new THREE.Mesh(eyeGeo, glowMat);
-    leftEye.position.set(-0.11, 0.05, 0.23);
+    leftEye.position.set(-0.09, 0.04, 0.19);
     const rightEye = new THREE.Mesh(eyeGeo, glowMat);
-    rightEye.position.set(0.11, 0.05, 0.23);
+    rightEye.position.set(0.09, 0.04, 0.19);
     this.headGroup.add(leftEye);
     this.headGroup.add(rightEye);
 
     // Stylized Eyebrows
-    const browGeo = new THREE.BoxGeometry(0.11, 0.03, 0.04);
+    const browGeo = new THREE.BoxGeometry(0.09, 0.025, 0.03);
     const browMat = new THREE.MeshStandardMaterial({ color: 0x27170e, roughness: 0.8 });
     const leftBrow = new THREE.Mesh(browGeo, browMat);
-    leftBrow.position.set(-0.11, 0.09, 0.235);
+    leftBrow.position.set(-0.09, 0.07, 0.195);
     leftBrow.rotation.z = -0.1;
     const rightBrow = new THREE.Mesh(browGeo, browMat);
-    rightBrow.position.set(0.11, 0.09, 0.235);
+    rightBrow.position.set(0.09, 0.07, 0.195);
     rightBrow.rotation.z = 0.1;
     this.headGroup.add(leftBrow);
     this.headGroup.add(rightBrow);
 
     // Stylized Brow / Nose detail
-    const noseGeo = new THREE.BoxGeometry(0.07, 0.13, 0.08);
+    const noseGeo = new THREE.BoxGeometry(0.05, 0.11, 0.06);
     const noseMesh = new THREE.Mesh(noseGeo, skinMat);
-    noseMesh.position.set(0, 0.01, 0.25);
+    noseMesh.position.set(0, 0.01, 0.20);
     this.headGroup.add(noseMesh);
 
     // Procedural Helmet / Headpiece
@@ -1507,4 +1508,61 @@ export class OpenWorldPlayer {
     this.observeEquipmentState();
     return item;
   }
+}
+
+export function createDefaultPlayerStats(startingClass: CharacterClassId = 'knight'): PlayerStats {
+  const classDef = MMORPG_CLASSES[startingClass];
+  const initialMasteries: Record<WeaponType, WeaponMastery> = JSON.parse(
+    JSON.stringify(DEFAULT_WEAPON_MASTERIES)
+  );
+  const initialAttributes: CharacterAttributes = {
+    strength: 10,
+    agility: 10,
+    intelligence: 10,
+    defense: 10,
+  };
+  return {
+    hp: classDef.baseHp,
+    maxHp: classDef.baseHp,
+    resource: classDef.baseResource,
+    maxResource: classDef.baseResource,
+    resourceName: classDef.resourceName,
+    resourceColor: classDef.resourceColor,
+    level: 1,
+    xp: 0,
+    maxXp: 100,
+    xpToNextLevel: 100,
+    gold: 250,
+    attackPower: classDef.baseAttack,
+    spellPower: classDef.baseSpellPower,
+    armor: classDef.baseArmor,
+    critChance: 10,
+    dodgeChance: 6,
+    moveSpeed: 100,
+    moveSpeedMultiplier: 1.0,
+    isMounted: false,
+    activeMountName: 'Clockwork Brass Stallion',
+    score: 0,
+    kills: 0,
+    bossKills: 0,
+    currentZone: 'Aethelgard Sanctum',
+    x: 0,
+    y: 0,
+    z: 8,
+    statPoints: 3,
+    attributes: initialAttributes,
+    activeWeaponType: 'blade',
+    weaponMasteries: initialMasteries,
+    equippedSkills: [...classDef.skills],
+    unlockedMilestoneSkills: [],
+    totalMasteryLevel: 4,
+    politicsLevel: 1,
+    politicsXp: 0,
+    ascensionLevel: 0,
+    ascensionXp: 0,
+    ascensionMaxXp: 10000,
+    ascensionPoints: 0,
+    ascensionTalents: {},
+    prestigeTitle: 'Aspirant',
+  };
 }

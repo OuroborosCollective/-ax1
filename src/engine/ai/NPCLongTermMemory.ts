@@ -155,6 +155,10 @@ export class NPCLongTermMemory {
     return this.enemies;
   }
 
+  public getEnemies(): readonly KnownEnemyMemory[] {
+    return this.enemies;
+  }
+
   public getTopEnemyThreat(): KnownEnemyMemory | null {
     if (this.enemies.length === 0) return null;
     return this.enemies.reduce((prev, curr) => (curr.threatLevel > prev.threatLevel ? curr : prev), this.enemies[0]);
@@ -219,6 +223,10 @@ export class NPCLongTermMemory {
     return this.tradePoints;
   }
 
+  public getGoodTradePoints(): readonly TradePointMemory[] {
+    return this.tradePoints;
+  }
+
   public getBestTradePoint(): TradePointMemory | null {
     if (this.tradePoints.length === 0) return null;
     return this.tradePoints.reduce((prev, curr) => (curr.affinityScore > prev.affinityScore ? curr : prev), this.tradePoints[0]);
@@ -270,6 +278,10 @@ export class NPCLongTermMemory {
   }
 
   public getResourceSpots(): readonly ResourceSpotMemory[] {
+    return this.resourceSpots;
+  }
+
+  public getBestResourceSpots(): readonly ResourceSpotMemory[] {
     return this.resourceSpots;
   }
 

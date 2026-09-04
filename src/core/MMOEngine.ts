@@ -22,6 +22,7 @@ import {
   RPGItem,
   SimulatedPlayer,
   WorldMobEntity,
+  DungeonDefinition,
 } from '../types';
 import { INITIAL_NPCS, MMORPG_CLASSES, COMPANION_PETS_DATABASE, HOMESTEAD_BLUEPRINTS } from '../data/mmorpgData';
 import { OpenWorldLandscape } from '../world/OpenWorldLandscape';
@@ -37,7 +38,7 @@ import { buffSystem } from '../engine/combat/BuffDebuffSystem';
 import { lodManager } from '../engine/lod/LODManager';
 import { soundSynth } from '../audio/SoundSynthesizer';
 import { GenkitAdapter } from '../adapters/GenkitAdapter';
-import { ParticleSystem } from './ParticleSystem';
+import { ParticleSystem, ParticleEffectType } from './ParticleSystem';
 import { syncManager } from './SyncManager';
 import { PartyManager } from './PartyManager';
 import { FixedTimestepLoop } from '../engine/simulation/FixedTimestepLoop';
@@ -83,6 +84,9 @@ export class MMOEngine {
 
   // Game Subsystems
   public landscape: OpenWorldLandscape;
+  public get worldChunkManager() {
+    return this.landscape.chunkManager;
+  }
   public player: OpenWorldPlayer;
   public mobManager: MobManager;
   public lootManager: LootDropManager;
@@ -114,7 +118,12 @@ export class MMOEngine {
   private petMeshGroup: THREE.Group | null = null;
   private petPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
   public unlockedHouses: HomesteadBlueprint[] = [];
-  private houseMeshes: THREE.Group[] = [];
+  public houseMeshes: THREE.Group[] = [];
+
+  // Dungeon Variables
+  public activeDungeon: DungeonDefinition | null = null;
+  public isInDungeon: boolean = false;
+  private preDungeonPosition: THREE.Vector3 | null = null;
 
   // Party Subsystem
   public partyManager: PartyManager;
@@ -157,6 +166,7 @@ export class MMOEngine {
   public targetMob: WorldMobEntity | null = null;
   public nearbyNPC: NPCCharacter | null = null;
   public nearbyLoot: LootDropEntity | null = null;
+  public autoLootEnabled: boolean = true;
 
   // Quests & Chat State
   public quests: Quest[] = [];
@@ -192,6 +202,8 @@ export class MMOEngine {
     netStats: MultiplayerNetStats;
     activeBuffs: ActiveBuffSummary[];
     engineMetrics: EnginePerformanceMetrics;
+    autoLootEnabled?: boolean;
+    pityCounters?: Record<string, number>;
   }) => void;
 
   private isRunning: boolean = false;
@@ -699,34 +711,79 @@ export class MMOEngine {
     const elev = this.landscape.chunkManager.getElevationAt(npc.x, npc.z);
     group.position.set(npc.x, elev, npc.z);
 
+    const baseColor = new THREE.Color(npc.color);
     const mat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(npc.color),
-      metalness: 0.8,
+      color: baseColor,
+      metalness: 0.75,
+      roughness: 0.32,
+    });
+    const goldMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b,
+      metalness: 0.95,
       roughness: 0.2,
     });
+    const darkMat = new THREE.MeshStandardMaterial({
+      color: 0x0a192f,
+      roughness: 0.7,
+    });
+    const glowMat = new THREE.MeshStandardMaterial({
+      color: 0x00f0ff,
+      emissive: 0x00f0ff,
+      emissiveIntensity: 1.8,
+    });
 
-    // Body & Robe
-    const bodyGeo = new THREE.CylinderGeometry(0.5, 0.7, 1.8, 8);
-    const body = new THREE.Mesh(bodyGeo, mat);
-    body.position.y = 0.9;
-    group.add(body);
+    // Sculpted Robes & Lower Mantle
+    const robeGeo = new THREE.CylinderGeometry(0.36, 0.58, 1.4, 8);
+    const robe = new THREE.Mesh(robeGeo, mat);
+    robe.position.y = 0.7;
+    group.add(robe);
 
-    // Head with glowing crest
-    const headGeo = new THREE.SphereGeometry(0.35, 8, 8);
+    // Articulated Torso & Vestment
+    const vestGeo = new THREE.CylinderGeometry(0.34, 0.32, 0.65, 8);
+    const vest = new THREE.Mesh(vestGeo, darkMat);
+    vest.position.y = 1.35;
+    group.add(vest);
+
+    // Golden Aether Trim & Collar
+    const collarGeo = new THREE.TorusGeometry(0.32, 0.05, 6, 16);
+    collarGeo.rotateX(Math.PI / 2);
+    const collar = new THREE.Mesh(collarGeo, goldMat);
+    collar.position.y = 1.65;
+    group.add(collar);
+
+    // Sculpted Head / Hood / Cowl
+    const headGeo = new THREE.CylinderGeometry(0.18, 0.22, 0.34, 8);
     const head = new THREE.Mesh(headGeo, mat);
-    head.position.y = 2.0;
+    head.position.y = 1.85;
     group.add(head);
 
-    // Quest Exclamation Icon (Floating Golden Marker)
-    const markGeo = new THREE.OctahedronGeometry(0.35, 0);
+    // Glowing Eyes / Visor
+    const visorGeo = new THREE.BoxGeometry(0.22, 0.06, 0.12);
+    const visor = new THREE.Mesh(visorGeo, glowMat);
+    visor.position.set(0, 1.86, 0.14);
+    group.add(visor);
+
+    // Pauldron Mantle
+    const pauldronGeo = new THREE.ConeGeometry(0.16, 0.3, 6);
+    const leftP = new THREE.Mesh(pauldronGeo, goldMat);
+    leftP.position.set(-0.38, 1.55, 0);
+    leftP.rotation.z = Math.PI / 4;
+    group.add(leftP);
+
+    const rightP = new THREE.Mesh(pauldronGeo, goldMat);
+    rightP.position.set(0.38, 1.55, 0);
+    rightP.rotation.z = -Math.PI / 4;
+    group.add(rightP);
+
+    // Floating Golden Quest Marker
+    const markGeo = new THREE.OctahedronGeometry(0.25, 0);
     const markMat = new THREE.MeshStandardMaterial({
       color: 0xfbbf24,
       emissive: 0xf59e0b,
-      emissiveIntensity: 1.8,
+      emissiveIntensity: 2.2,
     });
     const marker = new THREE.Mesh(markGeo, markMat);
-    marker.position.y = 3.2;
-    // Animate marker in update loop? It currently doesn't animate, let's keep it static for now
+    marker.position.y = 2.65;
     group.add(marker);
 
     this.scene.add(group);
@@ -915,6 +972,12 @@ export class MMOEngine {
       this.toggleMount();
     }
 
+    // U: Auto-Loot Toggle
+    if (key === 'u') {
+      e.preventDefault();
+      this.toggleAutoLoot();
+    }
+
     // F: Interact (Loot or NPC Talk)
     if (key === 'f') {
       e.preventDefault();
@@ -1023,6 +1086,25 @@ export class MMOEngine {
       isMounted ? '#38bdf8' : '#94a3b8',
       'md'
     );
+  }
+
+  public toggleAutoLoot(force?: boolean): boolean {
+    this.autoLootEnabled = force !== undefined ? force : !this.autoLootEnabled;
+    const status = this.autoLootEnabled ? 'AKTIVIERT' : 'DEAKTIVIERT';
+    soundSynth.playItemPickup();
+    this.addFloatingText(
+      `Auto-Loot (Common): ${status}`,
+      this.player.position.x,
+      this.player.position.y + 2.5,
+      this.autoLootEnabled ? '#10b981' : '#94a3b8',
+      'lg'
+    );
+    this.addChatMessage(
+      'system',
+      'Auto-Loot',
+      `Auto-Loot für gewöhnliche Beute ist jetzt ${status}. [Taste U zum Umschalten]`
+    );
+    return this.autoLootEnabled;
   }
 
   public interactNearby(): { npcOpened?: NPCCharacter; lootCollected?: RPGItem } {
@@ -1296,6 +1378,63 @@ export class MMOEngine {
     this.addFloatingText('Gatling Turret Deployed', turret.position.x, turret.position.y + 2, '#0ea5e9', 'md');
   }
 
+  public teleportPlayer(x: number, z: number, y?: number) {
+    this.player.position.set(x, y ?? 0, z);
+    this.particleSystem.emit('teleport_warp', this.player.position, '#00f0ff', 2.0);
+    soundSynth.playQuestComplete();
+  }
+
+  // --- Dungeon Matchmaking & Instancing Hooks ---
+  public enterDungeon(dungeon: DungeonDefinition) {
+    if (this.isInDungeon) return;
+    
+    // Save overworld position
+    this.preDungeonPosition = this.player.position.clone();
+    
+    this.activeDungeon = dungeon;
+    this.isInDungeon = true;
+    
+    // Teleport to an instanced origin (far away from main map)
+    const instancedZoneOffset = 10000 + Math.floor(Math.random() * 5000);
+    this.teleportPlayer(instancedZoneOffset, instancedZoneOffset, 2.0);
+    
+    this.addChatMessage('system', 'Dungeon Master', `Entered ${dungeon.name}! Objective: Slay ${dungeon.bosses.length} Bosses.`);
+
+    // Spawn Dungeon Bosses
+    dungeon.bosses.forEach((bossName, i) => {
+      const cx = instancedZoneOffset + Math.cos(i) * 15;
+      const cz = instancedZoneOffset + Math.sin(i) * 15;
+      this.mobManager.spawnDungeonBoss(
+        `instanced_boss_${dungeon.id}_${i}`,
+        bossName,
+        dungeon.levelReq + 2,
+        cx,
+        cz
+      );
+    });
+    
+    // Set atmosphere based on dungeon
+    this.currentSkyColor.setHex(0x0a0404);
+    this.scene.background = this.currentSkyColor;
+    this.ambientLight.intensity = 0.2;
+    this.ambientLight.color.setHex(0xffaaaa);
+  }
+
+  public exitDungeon() {
+    if (!this.isInDungeon || !this.preDungeonPosition) return;
+    
+    this.isInDungeon = false;
+    this.activeDungeon = null;
+    
+    // Restore overworld position
+    this.teleportPlayer(this.preDungeonPosition.x, this.preDungeonPosition.z, this.preDungeonPosition.y);
+    this.preDungeonPosition = null;
+    
+    this.addChatMessage('system', 'Dungeon Master', `Exited the dungeon and returned to the overworld.`);
+    
+    // Day-night cycle will automatically restore the overworld lighting on next tick
+  }
+
   private applyDamageToMob(mobId: string, damage: number, isCrit: boolean) {
     const mobVisual = this.mobManager.mobs.find((m) => m.entity.id === mobId);
     if (mobVisual) {
@@ -1332,10 +1471,37 @@ export class MMOEngine {
     soundSynth.playHitSound();
 
     // Trigger Combat Particle Burst
+    let pType: ParticleEffectType = 'combat_hit';
+    let pColor = '#ffffff';
+
     if (isCrit) {
-      this.particleSystem.emit('combat_crit', { x: result.mob.x, y: result.mob.y + 1.2, z: result.mob.z }, '#fbbf24', 1.2);
+      pType = 'combat_crit';
+      pColor = '#fbbf24';
     } else {
-      this.particleSystem.emit('combat_hit', { x: result.mob.x, y: result.mob.y + 1.0, z: result.mob.z }, '#ffffff', 1.0);
+      switch (this.player.currentClassId) {
+        case 'mage':
+          pType = Math.random() > 0.5 ? 'electric_spark' : 'frost_shatter';
+          pColor = Math.random() > 0.5 ? '#e879f9' : '#38bdf8'; // Purple for arcane, Cyan for frost
+          break;
+        case 'knight':
+          pType = 'physical_hit';
+          pColor = '#d4af37';
+          break;
+        case 'engineer':
+          pType = 'fire_impact';
+          pColor = '#ef4444'; // Red/Orange for fire
+          break;
+        case 'ranger':
+          pType = 'physical_hit';
+          pColor = '#22c55e'; // Green for nature/poison
+          break;
+      }
+    }
+
+    if (isCrit) {
+      this.particleSystem.emit(pType, { x: result.mob.x, y: result.mob.y + 1.2, z: result.mob.z }, pColor, 1.2);
+    } else {
+      this.particleSystem.emit(pType, { x: result.mob.x, y: result.mob.y + 1.0, z: result.mob.z }, pColor, 1.0);
     }
 
     // Floating damage text
@@ -1448,6 +1614,25 @@ export class MMOEngine {
           this.player.position.y + 3.4,
           '#38bdf8',
           'md'
+        );
+      }
+
+      // Pity Guarantee Feedback
+      if (result.isPityGuaranteed) {
+        soundSynth.playLegendaryDrop();
+        this.particleSystem.emit('beacon_activate', { x: result.mob.x, y: result.mob.y + 1.2, z: result.mob.z }, '#f59e0b', 3.5);
+        confetti({ particleCount: 160, spread: 90, origin: { y: 0.55 } });
+        this.addFloatingText(
+          '★ SCHICKSALS-MITLEID: GARANTIERTER LEGENDÄRER DROP! ★',
+          result.mob.x,
+          result.mob.y + 3.2,
+          '#f59e0b',
+          'xl'
+        );
+        this.addChatMessage(
+          'system',
+          'Schicksalsschmiede',
+          `🌟 MITLEID-GARANTIE AUSGELÖST! Nach 50 Versuchen ohne epische Beute bei [${result.mob.name}] wurde [${result.lootDropped?.name || 'Legendäre Beute'}] garantiert fallengelassen!`
         );
       }
 
@@ -1695,8 +1880,39 @@ export class MMOEngine {
       }
     });
 
-    // 6. Update Loot Drops & Check nearby interaction prompts
+    // 6. Update Loot Drops & Check nearby interaction prompts (with Auto-Loot for common items)
     this.lootManager.update(delta);
+
+    if (this.autoLootEnabled) {
+      const autoLooted = this.lootManager.collectNearbyCommonLoot(
+        this.player.position.x,
+        this.player.position.z,
+        4.0
+      );
+      if (autoLooted.length > 0) {
+        soundSynth.playLootPickup();
+        for (const loot of autoLooted) {
+          this.player.inventory.push(loot.item);
+          if (loot.goldAmount > 0) {
+            this.player.stats.gold += loot.goldAmount;
+          }
+          this.addFloatingText(
+            `+ Auto-Loot: ${loot.item.name}`,
+            this.player.position.x + (Math.random() - 0.5) * 1.5,
+            this.player.position.y + 2.2,
+            loot.beamColor,
+            'md'
+          );
+          this.addChatMessage(
+            'system',
+            'Auto-Loot',
+            `📦 Automatisch aufgesammelt: [${loot.item.name}] (Gewöhnlich)${loot.goldAmount > 0 ? ` + ${loot.goldAmount} Gold` : ''}`
+          );
+        }
+        this.progressQuests('collect_loot');
+      }
+    }
+
     this.nearbyLoot = this.lootManager.getNearbyLoot(this.player.position.x, this.player.position.z, 3.5);
 
     // Check nearby NPC
@@ -1887,6 +2103,8 @@ export class MMOEngine {
             timeRemainingSec: this.currentWeather.timeRemainingSec,
           },
         },
+        autoLootEnabled: this.autoLootEnabled,
+        pityCounters: this.lootManager.getAllPityCounters(),
       });
     }
   }

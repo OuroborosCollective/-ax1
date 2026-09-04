@@ -297,29 +297,107 @@ export class GLBModelManager {
               },
               undefined,
               (fallbackErr) => {
-                console.warn(`Could not load GLB model from ${url} or fallback ${fallbackUrl}, using procedural mesh fallback:`, fallbackErr);
-                const fallbackGroup = new THREE.Group();
-                const fallbackMesh = new THREE.Mesh(
-                  new THREE.BoxGeometry(0.3, 0.3, 0.3),
-                  new THREE.MeshStandardMaterial({ color: 0x00f0ff, roughness: 0.3, metalness: 0.8 })
-                );
-                fallbackGroup.add(fallbackMesh);
-                resolve({ scene: fallbackGroup, animations: [] });
+                // Reject cleanly so downstream procedural equipment and avatar managers know GLB is missing
+                reject(fallbackErr);
               }
             );
           } else {
-            console.warn(`Could not load external GLB model from ${url}, using procedural mesh fallback:`, err);
-            const fallbackGroup = new THREE.Group();
-            const fallbackMesh = new THREE.Mesh(
-              new THREE.BoxGeometry(0.3, 0.3, 0.3),
-              new THREE.MeshStandardMaterial({ color: 0x00f0ff, roughness: 0.3, metalness: 0.8 })
-            );
-            fallbackGroup.add(fallbackMesh);
-            resolve({ scene: fallbackGroup, animations: [] });
+            reject(err);
           }
         }
       );
     });
+  }
+
+  /**
+   * Generates a stylized, high-craft articulated character fallback mesh
+   * adhering strictly to Aurion art direction: weathered bronze, midnight-petrol, honey-stone, and Aurion-turquoise.
+   */
+  public createArticulatedCharacterFallback(primaryColorHex: number = 0xd97706): THREE.Group {
+    const root = new THREE.Group();
+
+    const bronzeMat = new THREE.MeshStandardMaterial({
+      color: primaryColorHex,
+      metalness: 0.85,
+      roughness: 0.28,
+    });
+    const darkMat = new THREE.MeshStandardMaterial({
+      color: 0x0a192f,
+      roughness: 0.7,
+    });
+    const glowMat = new THREE.MeshStandardMaterial({
+      color: 0x00f0ff,
+      emissive: 0x00f0ff,
+      emissiveIntensity: 1.8,
+    });
+
+    // Articulated Torso with Breastplate
+    const torsoGeo = new THREE.CylinderGeometry(0.32, 0.25, 0.75, 8);
+    const torso = new THREE.Mesh(torsoGeo, bronzeMat);
+    torso.position.y = 1.15;
+    root.add(torso);
+
+    // Glowing Leyline Core
+    const coreGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.06, 8);
+    coreGeo.rotateX(Math.PI / 2);
+    const core = new THREE.Mesh(coreGeo, glowMat);
+    core.position.set(0, 1.25, 0.22);
+    root.add(core);
+
+    // Sculpted Head & Helmet with Visor
+    const headGeo = new THREE.CylinderGeometry(0.18, 0.20, 0.32, 8);
+    const head = new THREE.Mesh(headGeo, bronzeMat);
+    head.position.y = 1.75;
+    root.add(head);
+
+    const visorGeo = new THREE.BoxGeometry(0.24, 0.06, 0.12);
+    const visor = new THREE.Mesh(visorGeo, glowMat);
+    visor.position.set(0, 1.76, 0.14);
+    root.add(visor);
+
+    // Shoulders
+    const pauldronGeo = new THREE.ConeGeometry(0.16, 0.28, 5);
+    const leftP = new THREE.Mesh(pauldronGeo, bronzeMat);
+    leftP.position.set(-0.42, 1.45, 0);
+    leftP.rotation.z = Math.PI / 4;
+    root.add(leftP);
+
+    const rightP = new THREE.Mesh(pauldronGeo, bronzeMat);
+    rightP.position.set(0.42, 1.45, 0);
+    rightP.rotation.z = -Math.PI / 4;
+    root.add(rightP);
+
+    // Arms
+    const armGeo = new THREE.CylinderGeometry(0.07, 0.06, 0.55, 6);
+    const leftArm = new THREE.Mesh(armGeo, darkMat);
+    leftArm.position.set(-0.38, 1.05, 0);
+    root.add(leftArm);
+
+    const rightArm = new THREE.Mesh(armGeo, darkMat);
+    rightArm.position.set(0.38, 1.05, 0);
+    root.add(rightArm);
+
+    // Legs
+    const legGeo = new THREE.CylinderGeometry(0.09, 0.08, 0.65, 6);
+    const leftLeg = new THREE.Mesh(legGeo, darkMat);
+    leftLeg.position.set(-0.16, 0.45, 0);
+    root.add(leftLeg);
+
+    const rightLeg = new THREE.Mesh(legGeo, darkMat);
+    rightLeg.position.set(0.16, 0.45, 0);
+    root.add(rightLeg);
+
+    // Sabaton Feet
+    const footGeo = new THREE.BoxGeometry(0.14, 0.12, 0.28);
+    const leftFoot = new THREE.Mesh(footGeo, bronzeMat);
+    leftFoot.position.set(-0.16, 0.08, 0.06);
+    root.add(leftFoot);
+
+    const rightFoot = new THREE.Mesh(footGeo, bronzeMat);
+    rightFoot.position.set(0.16, 0.08, 0.06);
+    root.add(rightFoot);
+
+    return root;
   }
 
   // Load and configure mesh for specific dynamic equipment attachment socket

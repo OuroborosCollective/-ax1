@@ -138,7 +138,14 @@ export class MobCombatState implements IState<MobFsmContext> {
 
     // 1. Leash check: If mob ventured too far from spawn, trigger Evade
     const leashStatus = threatMatrix.checkLeashAndDecay(mob.id, mob.x, mob.z);
-    if (leashStatus.isEvading) {
+    
+    // Fallback: If threatMatrix has no target, maybe local player is the only choice.
+    // In a fully developed MMORPG we would look up the exact entity position, but 
+    // for this prototype, if it's the hero, we use ctx.playerX/playerZ.
+    const activeTargetId = leashStatus.targetId;
+    const distToLocalPlayer = Math.hypot(ctx.playerX - mob.x, ctx.playerZ - mob.z);
+
+    if (leashStatus.isEvading || (!activeTargetId && distToLocalPlayer > (mob.isBoss ? 28.0 : mob.isElite ? 22.0 : 16.0))) {
       visual.fsm?.setState('evading', ctx);
       return;
     }
@@ -149,10 +156,14 @@ export class MobCombatState implements IState<MobFsmContext> {
       return;
     }
 
+    // Determine target coords based on activeTargetId (mocked for now, assuming local player if not found)
+    const targetX = ctx.playerX;
+    const targetZ = ctx.playerZ;
+
     // 3. Distance & Aggro drop-off
-    const distToPlayer = Math.hypot(ctx.playerX - mob.x, ctx.playerZ - mob.z);
+    const distToTarget = Math.hypot(targetX - mob.x, targetZ - mob.z);
     const aggroThreshold = mob.isBoss ? 28.0 : mob.isElite ? 22.0 : 16.0;
-    if (distToPlayer > aggroThreshold * 1.9 && !leashStatus.targetId) {
+    if (distToTarget > aggroThreshold * 1.9) {
       visual.fsm?.setState('evading', ctx);
       return;
     }
@@ -160,12 +171,12 @@ export class MobCombatState implements IState<MobFsmContext> {
     // 4. A* Pathfinding towards Target
     const now = performance.now();
     if (!visual.currentPath || !visual.lastPathCalcTime || now - visual.lastPathCalcTime > 320) {
-      visual.currentPath = navGrid.findPath(mob.x, mob.z, ctx.playerX, ctx.playerZ, 32.0);
+      visual.currentPath = navGrid.findPath(mob.x, mob.z, targetX, targetZ, 32.0);
       visual.lastPathCalcTime = now;
     }
 
-    let targetX = ctx.playerX;
-    let targetZ = ctx.playerZ;
+    let moveTargetX = targetX;
+    let moveTargetZ = targetZ;
     if (visual.currentPath && visual.currentPath.length > 0) {
       const wp = visual.currentPath[0];
       const distToWp = Math.hypot(wp.x - mob.x, wp.z - mob.z);
@@ -173,16 +184,16 @@ export class MobCombatState implements IState<MobFsmContext> {
         visual.currentPath.shift();
       }
       if (visual.currentPath[0]) {
-        targetX = visual.currentPath[0].x;
-        targetZ = visual.currentPath[0].z;
+        moveTargetX = visual.currentPath[0].x;
+        moveTargetZ = visual.currentPath[0].z;
       }
     }
 
-    const angleToTarget = Math.atan2(targetX - mob.x, targetZ - mob.z);
+    const angleToTarget = Math.atan2(moveTargetX - mob.x, moveTargetZ - mob.z);
     visual.group.rotation.y = angleToTarget;
 
     // Movement or Attack Action
-    if (distToPlayer > mob.attackRange) {
+    if (distToTarget > mob.attackRange) {
       const moveSpeed = (mob.isBoss ? 5.5 : 4.5) * delta;
       const dispX = Math.sin(angleToTarget) * moveSpeed;
       const dispZ = Math.cos(angleToTarget) * moveSpeed;
@@ -210,7 +221,7 @@ export class MobCombatState implements IState<MobFsmContext> {
       (visual.telegraphRing.material as THREE.MeshBasicMaterial).opacity = Math.sin(mob.castProgress * Math.PI) * 0.8;
       visual.telegraphRing.rotation.z += delta * 1.5;
 
-      if (mob.castProgress > 0.95 && distToPlayer <= 9.0) {
+      if (mob.castProgress > 0.95 && distToTarget <= 9.0) {
         ctx.onMobAttack?.(mob, 160);
       }
     }

@@ -27,6 +27,8 @@ import {
   Database,
   TrendingUp,
   Activity,
+  Hammer,
+  Crown,
 } from 'lucide-react';
 import {
   ActiveBuffSummary,
@@ -69,14 +71,21 @@ interface GameHUDProps {
   onToggleMount: () => void;
   onInteract: () => void;
   onOpenInventory: () => void;
+  onOpenCrafting?: () => void;
+  onOpenDungeonFinder?: () => void;
   onOpenCharacter: () => void;
   onOpenQuests: () => void;
   onOpenClasses: () => void;
   onOpenMap: () => void;
   onOpenParty?: () => void;
+  onOpenGuild?: () => void;
   onOpenServerConsole?: () => void;
   onOpenEconomy?: () => void;
   onOpenDeterminismOverlay?: () => void;
+  onOpenHomestead?: () => void;
+  autoLootEnabled?: boolean;
+  onToggleAutoLoot?: () => void;
+  pityCounters?: Record<string, number>;
   onSendMessage: (text: string, channel: ChatMessage['channel']) => void;
 }
 
@@ -95,20 +104,27 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   netStats,
   activeBuffs = [],
   engineMetrics,
+  autoLootEnabled = true,
+  onToggleAutoLoot,
+  pityCounters = {},
   onCastSkill,
   onCycleTarget,
   onVirtualMove,
   onToggleMount,
   onInteract,
   onOpenInventory,
+  onOpenCrafting,
+  onOpenDungeonFinder,
   onOpenCharacter,
   onOpenQuests,
   onOpenClasses,
   onOpenMap,
   onOpenParty,
+  onOpenGuild,
   onOpenServerConsole,
   onOpenEconomy,
   onOpenDeterminismOverlay,
+  onOpenHomestead,
   onSendMessage,
 }) => {
   const [chatInput, setChatInput] = useState('');
@@ -515,10 +531,30 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             <button
               onClick={onOpenInventory}
               className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-[#fbbf24] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
-              title="Inventory [B]"
+              title="Inventar & Rüstkammer [B]"
             >
               <Package className="w-4 h-4" />
             </button>
+            {onOpenCrafting && (
+              <button
+                onClick={onOpenCrafting}
+                className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-amber-400 text-amber-300 flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+                title="Handwerk & Berufe [H]"
+              >
+                <Hammer className="w-4 h-4" />
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_6px_#f59e0b]" />
+              </button>
+            )}
+            {onOpenDungeonFinder && (
+              <button
+                onClick={onOpenDungeonFinder}
+                className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#00f0ff] text-[#00f0ff] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+                title="Dungeon-Finder [L]"
+              >
+                <Compass className="w-4 h-4" />
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#00f0ff] shadow-[0_0_6px_#00f0ff]" />
+              </button>
+            )}
             <button
               onClick={onOpenClasses}
               className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-[#fbbf24] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
@@ -538,6 +574,17 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 </span>
               )}
             </button>
+
+            {onOpenGuild && (
+              <button
+                onClick={onOpenGuild}
+                className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#00f0ff] text-[#00f0ff] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+                title="Gilden-Verwaltung & Königreich [G]"
+              >
+                <Crown className="w-4 h-4" />
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#00f0ff] shadow-[0_0_6px_#00f0ff]" />
+              </button>
+            )}
             <button
               onClick={onOpenMap}
               className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-[#fbbf24] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
@@ -557,6 +604,16 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               </button>
             )}
 
+            {onOpenHomestead && (
+              <button
+                onClick={onOpenHomestead}
+                className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#d4af37] text-[#d4af37] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+                title="Homestead Builder [O]"
+              >
+                <Hammer className="w-4 h-4" />
+              </button>
+            )}
+
             {onOpenDeterminismOverlay && (
               <button
                 onClick={onOpenDeterminismOverlay}
@@ -565,6 +622,24 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               >
                 <Activity className="w-4 h-4" />
                 <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#00f0ff] shadow-[0_0_6px_#00f0ff]" />
+              </button>
+            )}
+
+            {onToggleAutoLoot && (
+              <button
+                id="btn-hud-auto-loot"
+                onClick={onToggleAutoLoot}
+                className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl ${
+                  autoLootEnabled
+                    ? 'bg-emerald-950/90 border-emerald-400/80 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.35)]'
+                    : 'bg-black/80 border-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-700'
+                } border flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative`}
+                title={`Auto-Loot (Gewöhnliche Beute): ${autoLootEnabled ? 'AKTIVIERT' : 'DEAKTIVIERT'} [Taste U]`}
+              >
+                <Sparkles className="w-4 h-4" />
+                {autoLootEnabled && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#10b981]" />
+                )}
               </button>
             )}
 
@@ -796,6 +871,23 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               <Crosshair className="w-4 h-4 text-red-400" />
               <span className="text-[7px]">TARGET</span>
             </button>
+
+            {/* Auto-Loot Toggle Button */}
+            {onToggleAutoLoot && (
+              <button
+                id="btn-hud-auto-loot-quick"
+                onClick={onToggleAutoLoot}
+                className={`w-10 h-10 sm:w-11 sm:h-11 rounded-full border flex flex-col items-center justify-center text-[9px] font-mono font-bold backdrop-blur-md shadow-lg active:scale-90 transition-transform cursor-pointer ${
+                  autoLootEnabled
+                    ? 'border-emerald-400 bg-emerald-950/80 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.4)]'
+                    : 'border-gray-700 bg-black/80 text-gray-500'
+                }`}
+                title={`Auto-Loot: ${autoLootEnabled ? 'AKTIV' : 'AUS'} [U]`}
+              >
+                <Sparkles className="w-4 h-4 text-emerald-400" />
+                <span className="text-[7px]">A-LOOT</span>
+              </button>
+            )}
 
             {/* Contextual Interact / Loot Button */}
             <button

@@ -5,6 +5,7 @@ import { soundSynth } from '../audio/SoundSynthesizer';
 export class PartyManager {
   public members: PartyMember[] = [];
   public maxPartySize: number = 5;
+  public lootRule: 'free_for_all' | 'round_robin' | 'need_before_greed' = 'need_before_greed';
   private simulationTimer: number = 0;
 
   // Callback to engine for chat and combat notifications
@@ -136,6 +137,19 @@ export class PartyManager {
     }
   }
 
+  public kickMember(memberId: string): boolean {
+    return this.removeMember(memberId);
+  }
+
+  public setLootRule(rule: 'free_for_all' | 'round_robin' | 'need_before_greed') {
+    this.lootRule = rule;
+    this.onPartyMessage?.('System', `Beuteregel geändert auf: ${rule}`);
+  }
+
+  public promoteLeader(memberId: string) {
+    this.promoteToLeader(memberId);
+  }
+
   public promoteToLeader(memberId: string) {
     this.members.forEach((m) => {
       m.isLeader = m.id === memberId;
@@ -209,4 +223,48 @@ export class PartyManager {
 
     return { sharedCount: shared, questTitle: progressedTitle };
   }
+
+  // --- Dynamic Group Buffs based on composition ---
+  public getPartyBuffs(): { name: string; description: string; icon: string; value: number }[] {
+    const buffs: { name: string; description: string; icon: string; value: number }[] = [];
+    if (!this.isInParty()) return buffs; // Only apply if grouped
+
+    const classesPresent = new Set(this.members.map(m => m.classId));
+
+    if (classesPresent.has('knight')) {
+      buffs.push({
+        name: 'Vanguard Presence',
+        description: '+10% Physical Defense for the entire party.',
+        icon: '🛡️',
+        value: 10,
+      });
+    }
+    if (classesPresent.has('mage')) {
+      buffs.push({
+        name: 'Aetherial Focus',
+        description: '+10% Mana Regeneration & Spell Power.',
+        icon: '✨',
+        value: 10,
+      });
+    }
+    if (classesPresent.has('ranger')) {
+      buffs.push({
+        name: 'Pathfinder',
+        description: '+10% Movement Speed & Attack Range.',
+        icon: '🎯',
+        value: 10,
+      });
+    }
+    if (classesPresent.has('engineer')) {
+      buffs.push({
+        name: 'Overclocked Gear',
+        description: '+5% Critical Strike Chance & Cooldown Reduction.',
+        icon: '⚙️',
+        value: 5,
+      });
+    }
+
+    return buffs;
+  }
 }
+

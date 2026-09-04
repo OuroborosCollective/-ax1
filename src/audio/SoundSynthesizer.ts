@@ -326,6 +326,28 @@ class SoundSynthesizer {
     osc.stop(now + 0.1);
   }
 
+  public playLegendaryDrop() {
+    if (this.isMuted) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    const now = this.ctx.currentTime;
+    const notes = [392.0, 493.88, 587.33, 783.99, 987.77, 1174.66];
+    notes.forEach((freq, idx) => {
+      const st = now + idx * 0.08;
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, st);
+      gain.gain.setValueAtTime(0.24, st);
+      gain.gain.exponentialRampToValueAtTime(0.001, st + 0.65);
+      osc.connect(gain);
+      gain.connect(this.ctx!.destination);
+      osc.start(st);
+      osc.stop(st + 0.65);
+    });
+  }
+
   public playInventorySort() {
     if (this.isMuted) return;
     this.initCtx();

@@ -1,7 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { X, MapPin, Compass, Skull, Shield, Award, Layers, Users, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
-import { NPCCharacter, PlayerStats, WorldChunkData, WorldExpansionStats } from '../types';
+import {
+  X,
+  MapPin,
+  Compass,
+  Skull,
+  Shield,
+  Award,
+  Layers,
+  Users,
+  Maximize2,
+  ZoomIn,
+  ZoomOut,
+  Clock,
+  Flame,
+  ChevronDown,
+  ChevronUp,
+  AlertCircle,
+} from 'lucide-react';
+import { NPCCharacter, PlayerStats, WorldChunkData, WorldExpansionStats, WorldBossRecord } from '../types';
 import { WorldChunkManager } from '../world/WorldChunkManager';
+import { INITIAL_WORLD_BOSSES } from '../data/bossLedgerData';
 
 interface WorldMapModalProps {
   isOpen: boolean;
@@ -9,6 +27,7 @@ interface WorldMapModalProps {
   playerStats: PlayerStats;
   npcs: NPCCharacter[];
   chunkManager?: WorldChunkManager | null;
+  worldBosses?: WorldBossRecord[];
 }
 
 export const WorldMapModal: React.FC<WorldMapModalProps> = ({
@@ -17,16 +36,32 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
   playerStats,
   npcs,
   chunkManager,
+  worldBosses = INITIAL_WORLD_BOSSES,
 }) => {
   const [zoomScale, setZoomScale] = useState<number>(1); // 1 = Realm View, 2.5 = Detailed View
   const [chunks, setChunks] = useState<WorldChunkData[]>([]);
+  const [isLedgerOpen, setIsLedgerOpen] = useState<boolean>(true);
+  const [selectedBossId, setSelectedBossId] = useState<string | null>(null);
+  const [now, setNow] = useState<number>(Date.now());
   const [stats, setStats] = useState<WorldExpansionStats>({
-    totalChunksGenerated: 25,
+    totalChunks: 25,
     totalAreaSqMeters: 160000,
     targetMaxPlayers: 2900,
     discoveredKingdoms: ['Königreich Aethelgard', 'Erzfürstentum Eisenmark', 'Aetherwald Vaeloria'],
-    activeObstacleCount: 200,
+    activeLandmarks: [],
+    currentChunkKey: '0,0',
+    currentKingdom: 'Königreich Aethelgard',
+    currentLandmark: 'Aethelgard Sanctum',
   });
+
+  // Ticker for live boss countdown timers
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -51,6 +86,24 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
 
   const playerMapX = toMapPct(playerStats.x, false);
   const playerMapY = toMapPct(playerStats.z, true);
+
+  const formatTimeSpan = (seconds: number) => {
+    if (seconds <= 0) return 'Jetzt aktiv / Bereit';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}m ${secs.toString().padStart(2, '0')}s`;
+  };
+
+  const formatElapsed = (timestamp: number | null) => {
+    if (!timestamp) return 'Noch nicht bezwungen';
+    const elapsedSec = Math.max(0, Math.floor((now - timestamp) / 1000));
+    const mins = Math.floor(elapsedSec / 60);
+    const hours = Math.floor(mins / 60);
+    if (hours > 0) {
+      return `vor ${hours}h ${mins % 60}m`;
+    }
+    return `vor ${mins}m ${elapsedSec % 60}s`;
+  };
 
   return (
     <div id="worldmap-modal-overlay" className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5">
@@ -122,7 +175,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
           <div className="flex flex-col">
             <span className="text-[10px] text-gray-400 uppercase tracking-wider">Feste Welt-Chunks</span>
             <span className="text-emerald-400 font-bold font-mono">
-              {stats.totalChunksGenerated} Sektoren gespeichert
+              {stats.totalChunks} Sektoren gespeichert
             </span>
           </div>
           <div className="flex flex-col">
@@ -150,28 +203,31 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
               const width = Math.max(4, right - left);
               const height = Math.max(4, bottom - top);
 
-              // Tint color per biome
-              const borderColor =
-                chunk.biome === 'city'
-                  ? 'rgba(217, 119, 6, 0.4)'
-                  : chunk.biome === 'forest'
-                  ? 'rgba(16, 185, 129, 0.35)'
-                  : chunk.biome === 'dungeon'
-                  ? 'rgba(168, 85, 247, 0.4)'
-                  : chunk.biome === 'mountains'
-                  ? 'rgba(148, 163, 184, 0.35)'
-                  : 'rgba(56, 189, 248, 0.3)';
+              // Tint color per landmark or biome
+              const isSanctumOrCity = chunk.landmarkType === 'sanctum' || chunk.landmarkType === 'city';
+              const isForest = chunk.landmarkType === 'forest' || chunk.biome.includes('forest') || chunk.biome.includes('woods');
+              const isDungeon = chunk.landmarkType === 'dungeon' || chunk.biome.includes('dungeon');
+              const isBorder = chunk.landmarkType === 'border' || chunk.landmarkType === 'quarry';
 
-              const bgColor =
-                chunk.biome === 'city'
-                  ? 'rgba(180, 83, 9, 0.08)'
-                  : chunk.biome === 'forest'
-                  ? 'rgba(5, 150, 105, 0.08)'
-                  : chunk.biome === 'dungeon'
-                  ? 'rgba(126, 34, 206, 0.12)'
-                  : chunk.biome === 'mountains'
-                  ? 'rgba(71, 85, 105, 0.08)'
-                  : 'rgba(14, 116, 144, 0.06)';
+              const borderColor = isSanctumOrCity
+                ? 'rgba(217, 119, 6, 0.4)'
+                : isForest
+                ? 'rgba(16, 185, 129, 0.35)'
+                : isDungeon
+                ? 'rgba(168, 85, 247, 0.4)'
+                : isBorder
+                ? 'rgba(148, 163, 184, 0.35)'
+                : 'rgba(56, 189, 248, 0.3)';
+
+              const bgColor = isSanctumOrCity
+                ? 'rgba(180, 83, 9, 0.08)'
+                : isForest
+                ? 'rgba(5, 150, 105, 0.08)'
+                : isDungeon
+                ? 'rgba(126, 34, 206, 0.12)'
+                : isBorder
+                ? 'rgba(71, 85, 105, 0.08)'
+                : 'rgba(14, 116, 144, 0.06)';
 
               return (
                 <div
@@ -189,13 +245,13 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
                   {/* Chunk Landmark Center Marker */}
                   <div className="absolute inset-0 flex flex-col items-center justify-center p-1 text-center">
                     <span className="text-xs">
-                      {chunk.landmarkType === 'city'
+                      {chunk.landmarkType === 'city' || chunk.landmarkType === 'sanctum'
                         ? '🏛️'
                         : chunk.landmarkType === 'dungeon'
                         ? '⚔️'
                         : chunk.landmarkType === 'forest'
                         ? '🌲'
-                        : chunk.landmarkType === 'watchtower'
+                        : chunk.landmarkType === 'border'
                         ? '🏰'
                         : '⛰️'}
                     </span>
@@ -230,18 +286,31 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
             <span className="text-[7.5px] text-gray-400">Hauptstadt</span>
           </div>
 
-          {/* World Boss Skull Marker */}
-          <div
-            className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer group z-20"
-            style={{ left: `${toMapPct(0, false)}%`, top: `${toMapPct(65, true)}%` }}
-          >
-            <div className="w-8 h-8 rounded-full bg-purple-900/90 border-2 border-purple-500 flex items-center justify-center text-red-400 shadow-[0_0_15px_rgba(147,51,234,0.5)] animate-pulse">
-              <Skull className="w-4 h-4" />
-            </div>
-            <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-1 bg-black/90 border border-purple-500 rounded text-[10px] font-serif font-bold text-purple-300 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-              World Boss: Titan Ignis (Lv. 15)
-            </div>
-          </div>
+          {/* Dynamic World Boss Markers */}
+          {worldBosses.map((boss) => {
+            const isAlive = !boss.lastDefeatedTimestamp || (now - boss.lastDefeatedTimestamp >= boss.respawnIntervalSec * 1000);
+            return (
+              <div
+                key={boss.id}
+                onClick={() => setSelectedBossId(selectedBossId === boss.id ? null : boss.id)}
+                className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer group z-20"
+                style={{ left: `${toMapPct(boss.coords.x, false)}%`, top: `${toMapPct(boss.coords.z, true)}%` }}
+              >
+                <div
+                  className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-base shadow-lg transition-transform hover:scale-125 ${
+                    isAlive
+                      ? 'bg-rose-950/90 border-rose-500 text-rose-300 shadow-[0_0_15px_rgba(244,63,94,0.6)] animate-pulse'
+                      : 'bg-gray-900/90 border-gray-600 text-gray-400 opacity-70'
+                  }`}
+                >
+                  <Skull className="w-4 h-4" />
+                </div>
+                <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-1 bg-black/95 border border-rose-500/80 rounded text-[10px] font-serif font-bold text-amber-200 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 shadow-xl">
+                  {boss.name} (Lv. {boss.level}) · {isAlive ? '🔥 AKTIV' : '⏳ RESPAWN'}
+                </div>
+              </div>
+            );
+          })}
 
           {/* NPC Marker Pins */}
           {npcs.map((npc) => (
@@ -275,6 +344,98 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
               DU (X: {Math.round(playerStats.x)}, Z: {Math.round(playerStats.z)})
             </div>
           </div>
+        </div>
+
+        {/* WORLD BOSS LEDGER & SPAWN TRACKER DRAWER */}
+        <div className="mt-1 bg-black/70 border border-rose-950/80 rounded-xl overflow-hidden">
+          <button
+            onClick={() => setIsLedgerOpen(!isLedgerOpen)}
+            className="w-full px-4 py-2 bg-gradient-to-r from-rose-950/40 via-purple-950/30 to-rose-950/40 hover:bg-rose-950/60 border-b border-rose-900/40 flex items-center justify-between text-left transition-colors cursor-pointer"
+          >
+            <div className="flex items-center gap-2">
+              <Skull className="w-4 h-4 text-rose-400" />
+              <span className="text-xs font-serif font-bold text-rose-200">
+                World Boss Ledger & Respawn-Chronik (Titan Ignis & Weltenbosse)
+              </span>
+              <span className="px-2 py-0.2 rounded-full text-[9px] font-mono bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                {worldBosses.filter((b) => !b.lastDefeatedTimestamp || (now - b.lastDefeatedTimestamp >= b.respawnIntervalSec * 1000)).length}/{worldBosses.length} Bosses Aktiv
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <span className="text-[10px] hidden sm:inline">Klicke zum {isLedgerOpen ? 'Einklappen' : 'Ausklappen'}</span>
+              {isLedgerOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </div>
+          </button>
+
+          {isLedgerOpen && (
+            <div className="p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2.5 max-h-[160px] overflow-y-auto">
+              {worldBosses.map((boss) => {
+                const elapsedSec = boss.lastDefeatedTimestamp ? Math.floor((now - boss.lastDefeatedTimestamp) / 1000) : 999999;
+                const isAlive = !boss.lastDefeatedTimestamp || elapsedSec >= boss.respawnIntervalSec;
+                const remainingSec = Math.max(0, boss.respawnIntervalSec - elapsedSec);
+
+                return (
+                  <div
+                    key={boss.id}
+                    onClick={() => setSelectedBossId(selectedBossId === boss.id ? null : boss.id)}
+                    className={`p-2.5 rounded-lg border transition-all cursor-pointer ${
+                      selectedBossId === boss.id
+                        ? 'bg-rose-950/50 border-rose-400 shadow-[0_0_10px_rgba(244,63,94,0.3)]'
+                        : isAlive
+                        ? 'bg-[#150a12] border-rose-900/50 hover:border-rose-500/50'
+                        : 'bg-[#0c0d12] border-gray-800 hover:border-gray-700 opacity-85'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-base shrink-0">{boss.icon}</span>
+                        <div className="truncate">
+                          <div className="text-xs font-serif font-bold text-amber-100 truncate">{boss.name}</div>
+                          <div className="text-[9px] text-gray-400">Lv. {boss.level} · {boss.zone}</div>
+                        </div>
+                      </div>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[8px] font-mono font-bold uppercase shrink-0 ${
+                          isAlive
+                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse'
+                            : 'bg-amber-500/10 text-amber-300 border border-amber-500/30'
+                        }`}
+                      >
+                        {isAlive ? 'Aktiv' : 'Respawn'}
+                      </span>
+                    </div>
+
+                    <div className="mt-2 pt-1.5 border-t border-gray-800/80 grid grid-cols-2 gap-1 text-[10px] font-mono">
+                      <div>
+                        <span className="text-gray-500 block text-[8px]">Letzter Fall:</span>
+                        <span className="text-gray-300 truncate block">{formatElapsed(boss.lastDefeatedTimestamp)}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-gray-500 block text-[8px]">{isAlive ? 'Status:' : 'Respawn in:'}</span>
+                        <span className={isAlive ? 'text-rose-400 font-bold' : 'text-amber-400'}>
+                          {isAlive ? 'Bereit zum Kampf' : formatTimeSpan(remainingSec)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {selectedBossId === boss.id && (
+                      <div className="mt-2 pt-2 border-t border-rose-900/60 text-[9px] text-gray-300 space-y-1">
+                        <div>
+                          <strong className="text-rose-300">Letzter Bezwinger:</strong> {boss.lastSlayerName} ({boss.defeatCount}x besiegt)
+                        </div>
+                        <div>
+                          <strong className="text-amber-300">Beute-Pool:</strong> {boss.rareDrops.join(', ')}
+                        </div>
+                        <div className="text-cyan-300 font-mono">
+                          Arena-Koordinaten: [X: {boss.coords.x}, Z: {boss.coords.z}]
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Footer Zone Info & Realm Legend */}

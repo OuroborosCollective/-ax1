@@ -18,6 +18,12 @@ import {
   RPGItem,
   SimulatedPlayer,
   WorldMobEntity,
+  SoldBuybackItem,
+  CraftingProfessionId,
+  DungeonDefinition,
+  GatheringProfessionId,
+  ProfessionId,
+  ProfessionSkill,
 } from './types';
 import { GameHUD } from './components/GameHUD';
 import { InventoryModal } from './components/InventoryModal';
@@ -27,11 +33,19 @@ import { NPCDialogueModal } from './components/NPCDialogueModal';
 import { QuestLogModal } from './components/QuestLogModal';
 import { WorldMapModal } from './components/WorldMapModal';
 import { PartyModal } from './components/PartyModal';
+import { CraftingModal } from './components/CraftingModal';
+import { DungeonFinderModal } from './components/DungeonFinderModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { MariaDbAndGlbConsole } from './components/MariaDbAndGlbConsole';
 import { TerritoryPoliticsModal } from './components/TerritoryPoliticsModal';
 import { NPCEconomyModal } from './components/NPCEconomyModal';
 import { DeterminismDebugOverlay } from './components/DeterminismDebugOverlay';
+import { GuildManagementModal } from './components/GuildManagementModal';
+import { HomesteadBuilderModal } from './components/HomesteadBuilderModal';
+import { DEFAULT_PROFESSION_SKILLS } from './data/professionsData';
+import { HOMESTEAD_BLUEPRINTS } from './data/mmorpgData';
 import { syncManager } from './core/SyncManager';
+import { createDefaultPlayerStats } from './entities/OpenWorldPlayer';
 
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -43,29 +57,7 @@ export default function App() {
 
   // Core RPG Reactive States
   const [currentClassId, setCurrentClassId] = useState<CharacterClassId>('knight');
-  const [stats, setStats] = useState<PlayerStats>({
-    hp: 450,
-    maxHp: 450,
-    resource: 100,
-    maxResource: 100,
-    resourceName: 'Steam Pressure',
-    level: 1,
-    xp: 0,
-    maxXp: 180,
-    attackPower: 45,
-    spellPower: 15,
-    armor: 35,
-    critChance: 12,
-    moveSpeed: 100,
-    gold: 250,
-    kills: 0,
-    bossKills: 0,
-    isMounted: false,
-    x: 0,
-    y: 0,
-    z: 0,
-    currentZone: 'Grand Sanctum of Aethelgard',
-  });
+  const [stats, setStats] = useState<PlayerStats>(() => createDefaultPlayerStats('knight'));
 
   const [targetMob, setTargetMob] = useState<WorldMobEntity | null>(null);
   const [nearbyNPC, setNearbyNPC] = useState<NPCCharacter | null>(null);
@@ -109,12 +101,20 @@ export default function App() {
   const [isQuestLogOpen, setIsQuestLogOpen] = useState(false);
   const [isMapOpen, setIsMapOpen] = useState(false);
   const [isPartyOpen, setIsPartyOpen] = useState(false);
+  const [isCraftingOpen, setIsCraftingOpen] = useState(false);
+  const [isDungeonFinderOpen, setIsDungeonFinderOpen] = useState(false);
+  const [professions, setProfessions] = useState<Record<ProfessionId, ProfessionSkill>>(DEFAULT_PROFESSION_SKILLS);
   const [isServerConsoleOpen, setIsServerConsoleOpen] = useState(false);
   const [isPoliticsOpen, setIsPoliticsOpen] = useState(false);
   const [isEconomyOpen, setIsEconomyOpen] = useState(false);
+  const [isGuildOpen, setIsGuildOpen] = useState(false);
   const [isDeterminismOverlayOpen, setIsDeterminismOverlayOpen] = useState(false);
+  const [isHomesteadOpen, setIsHomesteadOpen] = useState(false);
   const [isPathfindingDebugActive, setIsPathfindingDebugActive] = useState(false);
   const [activeNPC, setActiveNPC] = useState<NPCCharacter | null>(null);
+  const [autoLootEnabled, setAutoLootEnabled] = useState(true);
+  const [pityCounters, setPityCounters] = useState<Record<string, number>>({});
+  const [buybackQueue, setBuybackQueue] = useState<SoldBuybackItem[]>([]);
 
   // Initialize MMO Engine with WebGL verification and DOM timing safeguard
   useEffect(() => {
@@ -163,6 +163,8 @@ export default function App() {
         if (state.netStats) setNetStats({ ...state.netStats });
         if (state.activeBuffs) setActiveBuffs([...state.activeBuffs]);
         if (state.engineMetrics) setEngineMetrics({ ...state.engineMetrics });
+        if (state.autoLootEnabled !== undefined) setAutoLootEnabled(state.autoLootEnabled);
+        if (state.pityCounters) setPityCounters({ ...state.pityCounters });
       };
 
 
@@ -208,12 +210,18 @@ export default function App() {
       } else if (key === 'c') {
         e.preventDefault();
         setIsCharacterOpen((prev) => !prev);
+      } else if (key === 'h') {
+        e.preventDefault();
+        setIsCraftingOpen((prev) => !prev);
+      } else if (key === 'l') {
+        e.preventDefault();
+        setIsDungeonFinderOpen((prev) => !prev);
+      } else if (key === 'j' || key === 'q') {
+        e.preventDefault();
+        setIsQuestLogOpen((prev) => !prev);
       } else if (key === 'm') {
         e.preventDefault();
         setIsMapOpen((prev) => !prev);
-      } else if (key === 'l') {
-        e.preventDefault();
-        setIsQuestLogOpen((prev) => !prev);
       } else if (key === 'k') {
         e.preventDefault();
         setIsClassSelectOpen((prev) => !prev);
@@ -226,20 +234,36 @@ export default function App() {
       } else if (key === 'n') {
         e.preventDefault();
         setIsEconomyOpen((prev) => !prev);
+      } else if (key === 'g') {
+        e.preventDefault();
+        setIsGuildOpen((prev) => !prev);
       } else if (key === 'f2') {
         e.preventDefault();
         setIsDeterminismOverlayOpen((prev) => !prev);
+      } else if (key === 'o') {
+        e.preventDefault();
+        setIsHomesteadOpen((prev) => !prev);
+      } else if (key === 'u') {
+        e.preventDefault();
+        if (engineRef.current) {
+          const next = engineRef.current.toggleAutoLoot();
+          setAutoLootEnabled(next);
+        }
       } else if (key === 'escape') {
         setIsInventoryOpen(false);
+        setIsCraftingOpen(false);
+        setIsDungeonFinderOpen(false);
         setIsCharacterOpen(false);
         setIsClassSelectOpen(false);
         setIsNPCDialogueOpen(false);
         setIsQuestLogOpen(false);
         setIsMapOpen(false);
         setIsPartyOpen(false);
+        setIsGuildOpen(false);
         setIsServerConsoleOpen(false);
         setIsEconomyOpen(false);
         setIsDeterminismOverlayOpen(false);
+        setIsHomesteadOpen(false);
       }
     };
 
@@ -347,11 +371,8 @@ export default function App() {
     const isTank = player.classId === 'knight';
     const isHealer = player.classId === 'mage';
     const success = engineRef.current.partyManager.inviteMember({
-      id: player.id,
-      name: player.name,
-      classId: player.classId,
-      level: player.level,
-      avatarIcon: player.name.includes('Slayer') ? '⚔️' : player.name.includes('Heal') ? '💖' : '🛡️',
+      ...player,
+      avatarIcon: player.avatarIcon || (player.name.includes('Slayer') ? '⚔️' : player.name.includes('Heal') ? '💖' : '🛡️'),
       role: isTank ? 'tank' : isHealer ? 'healer' : 'dps',
       hp: 400 + player.level * 45,
       maxHp: 400 + player.level * 45,
@@ -405,6 +426,151 @@ export default function App() {
     }
   }, []);
 
+  const handleCraftSuccess = useCallback(
+    (
+      outputItem: RPGItem,
+      consumedItems: { id: string; count: number }[],
+      xpAward: number,
+      professionId: CraftingProfessionId
+    ) => {
+      if (!engineRef.current) return;
+      const player = engineRef.current.player;
+
+      // Deduct consumed ingredients
+      const currentInv = [...player.inventory];
+      for (const consumed of consumedItems) {
+        const idx = currentInv.findIndex(
+          (it) => it.id === consumed.id || it.name.toLowerCase().includes(consumed.id.toLowerCase())
+        );
+        if (idx !== -1) {
+          const it = currentInv[idx];
+          if ((it.quantity || 1) > consumed.count) {
+            currentInv[idx] = { ...it, quantity: (it.quantity || 1) - consumed.count };
+          } else {
+            currentInv.splice(idx, 1);
+          }
+        }
+      }
+
+      currentInv.push(outputItem);
+      player.inventory = currentInv;
+      setInventory([...currentInv]);
+
+      engineRef.current.addFloatingText(
+        `Hergestellt: ${outputItem.name}!`,
+        player.position.x,
+        player.position.y + 2.5,
+        '#f59e0b',
+        'lg'
+      );
+      engineRef.current.addChatMessage(
+        'system',
+        'Handwerk',
+        `Du hast [${outputItem.name}] gefertigt (+${xpAward} Berufs-XP).`
+      );
+    },
+    []
+  );
+
+  const handleGatherSuccess = useCallback(
+    (
+      yieldItem: RPGItem,
+      count: number,
+      xpAward: number,
+      professionId: GatheringProfessionId
+    ) => {
+      if (!engineRef.current) return;
+      const player = engineRef.current.player;
+
+      const currentInv = [...player.inventory];
+      const existingIdx = currentInv.findIndex((it) => it.id === yieldItem.id || it.name === yieldItem.name);
+      if (existingIdx !== -1) {
+        currentInv[existingIdx] = {
+          ...currentInv[existingIdx],
+          quantity: (currentInv[existingIdx].quantity || 1) + count,
+        };
+      } else {
+        currentInv.push({ ...yieldItem, quantity: count });
+      }
+      player.inventory = currentInv;
+      setInventory([...currentInv]);
+
+      engineRef.current.addFloatingText(
+        `+${count}x ${yieldItem.name}`,
+        player.position.x,
+        player.position.y + 2.2,
+        '#10b981',
+        'md'
+      );
+      engineRef.current.addChatMessage(
+        'system',
+        'Sammeln',
+        `Du hast ${count}x [${yieldItem.name}] gesammelt (+${xpAward} Berufs-XP).`
+      );
+    },
+    []
+  );
+
+  const handleUpdateProfessions = useCallback((updated: Record<ProfessionId, ProfessionSkill>) => {
+    setProfessions(updated);
+  }, []);
+
+  const handleEnterDungeon = useCallback(
+    (dungeon: DungeonDefinition, rewardXP: number, rewardGold: number) => {
+      if (!engineRef.current) return;
+      const player = engineRef.current.player;
+
+      // Teleport into dungeon
+      engineRef.current.enterDungeon(dungeon);
+      setIsDungeonFinderOpen(false);
+
+      const newGold = stats.gold + rewardGold;
+      player.stats.gold = newGold;
+      setStats((prev) => ({
+        ...prev,
+        gold: newGold,
+        xp: prev.xp + rewardXP,
+        bossKills: prev.bossKills + dungeon.bossCount,
+        currentZone: dungeon.germanName,
+      }));
+
+      // Award dungeon relic
+      const dropItem: RPGItem = {
+        id: `dungeon_drop_${Date.now()}`,
+        name: `Insignie von ${dungeon.germanName}`,
+        slot: 'relic',
+        rarity: dungeon.rewards.gearRarity,
+        icon: '🛡️',
+        description: `Erobert in den Tiefen von ${dungeon.germanName}. Erfüllt von altertümlicher Aurion-Magie.`,
+        levelReq: dungeon.levelReq,
+        stats: {
+          armor: 25 + dungeon.levelReq * 5,
+          maxHp: 80 + dungeon.levelReq * 20,
+          attack: 15 + dungeon.levelReq * 3,
+        },
+        valueGold: dungeon.rewards.gold,
+      };
+
+      const updatedInv = [...player.inventory, dropItem];
+      player.inventory = updatedInv;
+      setInventory(updatedInv);
+
+      engineRef.current.addFloatingText(
+        `Instanz betreten: ${dungeon.germanName}!`,
+        player.position.x,
+        player.position.y + 3.2,
+        '#00f0ff',
+        'xl'
+      );
+      engineRef.current.addChatMessage(
+        'party',
+        'Dungeon-Leiter',
+        `Deine Gruppe hat ${dungeon.germanName} betreten! Belohnungen: +${rewardGold} Gold, +${rewardXP} XP.`
+      );
+    },
+    [stats.gold]
+  );
+
   const handleSendMessage = useCallback((text: string, channel: ChatMessage['channel']) => {
     if (!engineRef.current) return;
 
@@ -421,6 +587,7 @@ export default function App() {
             rarity: 'legendary',
             icon: '⚔️',
             description: 'Forged from the heart of Titan Ignis.',
+            levelReq: 1,
             stats: { attack: 120, critChance: 25 },
             valueGold: 500,
           },
@@ -487,219 +654,387 @@ export default function App() {
       )}
 
       {/* Real-time MMORPG Heads-Up Display */}
-      <GameHUD
-        playerStats={stats}
-        currentClassId={currentClassId}
-        targetMob={targetMob}
-        nearbyNPC={nearbyNPC}
-        nearbyLoot={nearbyLoot}
-        quests={quests}
-        chatMessages={chatMessages}
-        floatingTexts={floatingTexts}
-        partyMembers={partyMembers}
-        dayNightInfo={dayNightInfo}
-        netStats={netStats}
-        activeBuffs={activeBuffs}
-        engineMetrics={engineMetrics}
-        onCastSkill={handleCastSkill}
-        onCycleTarget={handleCycleTarget}
-        onVirtualMove={handleVirtualMove}
-        onToggleMount={handleToggleMount}
-        onInteract={handleInteract}
-        onOpenInventory={() => setIsInventoryOpen(true)}
-        onOpenCharacter={() => setIsCharacterOpen(true)}
-        onOpenQuests={() => setIsQuestLogOpen(true)}
-        onOpenClasses={() => setIsClassSelectOpen(true)}
-        onOpenMap={() => setIsMapOpen(true)}
-        onOpenParty={() => setIsPartyOpen(true)}
-        onOpenServerConsole={() => setIsServerConsoleOpen(true)}
-        onOpenEconomy={() => setIsEconomyOpen(true)}
-        onOpenDeterminismOverlay={() => setIsDeterminismOverlayOpen((prev) => !prev)}
-        onSendMessage={handleSendMessage}
-      />
+      <ErrorBoundary componentName="GameHUD">
+        <GameHUD
+          playerStats={stats}
+          currentClassId={currentClassId}
+          targetMob={targetMob}
+          nearbyNPC={nearbyNPC}
+          nearbyLoot={nearbyLoot}
+          quests={quests}
+          chatMessages={chatMessages}
+          floatingTexts={floatingTexts}
+          partyMembers={partyMembers}
+          dayNightInfo={dayNightInfo}
+          netStats={netStats}
+          activeBuffs={activeBuffs}
+          engineMetrics={engineMetrics}
+          onCastSkill={handleCastSkill}
+          onCycleTarget={handleCycleTarget}
+          onVirtualMove={handleVirtualMove}
+          onToggleMount={handleToggleMount}
+          onInteract={handleInteract}
+          onOpenInventory={() => setIsInventoryOpen(true)}
+          onOpenCrafting={() => setIsCraftingOpen(true)}
+          onOpenDungeonFinder={() => setIsDungeonFinderOpen(true)}
+          onOpenCharacter={() => setIsCharacterOpen(true)}
+          onOpenQuests={() => setIsQuestLogOpen(true)}
+          onOpenClasses={() => setIsClassSelectOpen(true)}
+          onOpenMap={() => setIsMapOpen(true)}
+          onOpenParty={() => setIsPartyOpen(true)}
+          onOpenGuild={() => setIsGuildOpen(true)}
+          onOpenServerConsole={() => setIsServerConsoleOpen(true)}
+          onOpenEconomy={() => setIsEconomyOpen(true)}
+          onOpenHomestead={() => setIsHomesteadOpen(true)}
+          onOpenDeterminismOverlay={() => setIsDeterminismOverlayOpen((prev) => !prev)}
+          autoLootEnabled={autoLootEnabled}
+          onToggleAutoLoot={() => {
+            if (engineRef.current) {
+              const next = engineRef.current.toggleAutoLoot();
+              setAutoLootEnabled(next);
+            }
+          }}
+          pityCounters={pityCounters}
+          onSendMessage={handleSendMessage}
+        />
+      </ErrorBoundary>
+
+      {/* Crafting & Professions Dialog */}
+      <ErrorBoundary componentName="CraftingModal">
+        <CraftingModal
+          isOpen={isCraftingOpen}
+          onClose={() => setIsCraftingOpen(false)}
+          inventory={inventory}
+          playerGold={stats.gold}
+          professions={professions}
+          onCraftSuccess={handleCraftSuccess}
+          onGatherSuccess={handleGatherSuccess}
+          onUpdateProfessions={handleUpdateProfessions}
+        />
+      </ErrorBoundary>
+
+      {/* Dungeon Finder & LFG Dialog */}
+      <ErrorBoundary componentName="DungeonFinderModal">
+        <DungeonFinderModal
+          isOpen={isDungeonFinderOpen}
+          onClose={() => setIsDungeonFinderOpen(false)}
+          playerLevel={stats.level}
+          playerName="Held von Aurion"
+          onEnterDungeon={handleEnterDungeon}
+        />
+      </ErrorBoundary>
 
       {/* Inventory & Equipment Paperdoll Dialog */}
-      <InventoryModal
-        isOpen={isInventoryOpen}
-        onClose={() => setIsInventoryOpen(false)}
-        equipment={equipment}
-        inventory={inventory}
-        gold={stats.gold}
-        onEquip={handleEquipItem}
-        onUnequip={handleUnequipSlot}
-        onUseConsumable={handleUseConsumable}
-        onDiscard={handleDiscardItem}
-        onSortInventory={handleSortInventory}
-      />
+      <ErrorBoundary componentName="InventoryModal">
+        <InventoryModal
+          isOpen={isInventoryOpen}
+          onClose={() => setIsInventoryOpen(false)}
+          equipment={equipment}
+          inventory={inventory}
+          gold={stats.gold}
+          autoLootEnabled={autoLootEnabled}
+          onToggleAutoLoot={() => {
+            if (engineRef.current) {
+              const next = engineRef.current.toggleAutoLoot();
+              setAutoLootEnabled(next);
+            }
+          }}
+          pityCounters={pityCounters}
+          onEquip={handleEquipItem}
+          onUnequip={handleUnequipSlot}
+          onUseConsumable={handleUseConsumable}
+          onDiscard={handleDiscardItem}
+          onSortInventory={handleSortInventory}
+        />
+      </ErrorBoundary>
 
       {/* Party Management & Cooperative Grouping Dialog */}
-      <PartyModal
-        isOpen={isPartyOpen}
-        onClose={() => setIsPartyOpen(false)}
-        partyMembers={partyMembers}
-        availablePlayers={simPlayers}
-        nearbyPlayers={simPlayers}
-        lootRule={engineRef.current?.partyManager.lootRule || 'round_robin'}
-        onInvitePlayer={handleInvitePartyMember}
-        onKickMember={handleKickPartyMember}
-        onRemoveMember={handleKickPartyMember}
-        onLeaveParty={handleLeaveParty}
-        onPromoteLeader={handlePromoteLeader}
-        onSetLootRule={handleSetLootRule}
-      />
-
+      <ErrorBoundary componentName="PartyModal">
+        <PartyModal
+          isOpen={isPartyOpen}
+          onClose={() => setIsPartyOpen(false)}
+          partyMembers={partyMembers}
+          availablePlayers={simPlayers}
+          nearbyPlayers={simPlayers}
+          lootRule={engineRef.current?.partyManager.lootRule || 'round_robin'}
+          onInvitePlayer={handleInvitePartyMember}
+          onKickMember={handleKickPartyMember}
+          onRemoveMember={handleKickPartyMember}
+          onLeaveParty={handleLeaveParty}
+          onPromoteLeader={handlePromoteLeader}
+          onSetLootRule={handleSetLootRule}
+        />
+      </ErrorBoundary>
 
       {/* Character Sheet & Attributes Dialog */}
-      <CharacterModal
-        isOpen={isCharacterOpen}
-        onClose={() => setIsCharacterOpen(false)}
-        stats={stats}
-        currentClassId={currentClassId}
-        onAllocateStatPoint={handleAllocateStatPoint}
-        onUnlockMilestoneSkill={handleUnlockMilestoneSkill}
-        onEquipSkill={handleEquipSkill}
-      />
+      <ErrorBoundary componentName="CharacterModal">
+        <CharacterModal
+          isOpen={isCharacterOpen}
+          onClose={() => setIsCharacterOpen(false)}
+          stats={stats}
+          currentClassId={currentClassId}
+          onAllocateStatPoint={handleAllocateStatPoint}
+          onUnlockMilestoneSkill={handleUnlockMilestoneSkill}
+          onEquipSkill={handleEquipSkill}
+        />
+      </ErrorBoundary>
 
       {/* Class Sanctum & Skill Switcher Dialog */}
-      <ClassSelectModal
-        isOpen={isClassSelectOpen}
-        onClose={() => setIsClassSelectOpen(false)}
-        currentClassId={currentClassId}
-        onSelectClass={handleSelectClass}
-      />
+      <ErrorBoundary componentName="ClassSelectModal">
+        <ClassSelectModal
+          isOpen={isClassSelectOpen}
+          onClose={() => setIsClassSelectOpen(false)}
+          currentClassId={currentClassId}
+          onSelectClass={handleSelectClass}
+        />
+      </ErrorBoundary>
 
       {/* NPC Dialogue, Quests, Genkit AI Quest Board & Merchant Shop Dialog */}
-      <NPCDialogueModal
-        isOpen={isNPCDialogueOpen}
-        onClose={() => setIsNPCDialogueOpen(false)}
-        npc={activeNPC}
-        activeQuests={quests}
-        playerGold={stats.gold}
-        playerLevel={stats.level}
-        genkitAdapter={engineRef.current?.genkitAdapter}
-        onAcceptQuest={handleAcceptQuest}
-        onBuyItem={handleBuyItem}
-      />
+      <ErrorBoundary componentName="NPCDialogueModal">
+        <NPCDialogueModal
+          isOpen={isNPCDialogueOpen}
+          onClose={() => setIsNPCDialogueOpen(false)}
+          npc={activeNPC}
+          activeQuests={quests}
+          playerGold={stats.gold}
+          playerLevel={stats.level}
+          genkitAdapter={engineRef.current?.genkitAdapter}
+          onAcceptQuest={handleAcceptQuest}
+          onBuyItem={handleBuyItem}
+        />
+      </ErrorBoundary>
 
       {/* Dedicated Quest Chronicles Log Dialog */}
-      <QuestLogModal
-        isOpen={isQuestLogOpen}
-        onClose={() => setIsQuestLogOpen(false)}
-        quests={quests}
-      />
+      <ErrorBoundary componentName="QuestLogModal">
+        <QuestLogModal
+          isOpen={isQuestLogOpen}
+          onClose={() => setIsQuestLogOpen(false)}
+          quests={quests}
+        />
+      </ErrorBoundary>
 
       {/* Realm Atlas World Map Dialog */}
-      <WorldMapModal
-        isOpen={isMapOpen}
-        onClose={() => setIsMapOpen(false)}
-        playerStats={stats}
-        npcs={engineRef.current?.npcs || []}
-        chunkManager={engineRef.current?.landscape.chunkManager || null}
-      />
+      <ErrorBoundary componentName="WorldMapModal">
+        <WorldMapModal
+          isOpen={isMapOpen}
+          onClose={() => setIsMapOpen(false)}
+          playerStats={stats}
+          npcs={engineRef.current?.npcs || []}
+          chunkManager={engineRef.current?.landscape.chunkManager || null}
+        />
+      </ErrorBoundary>
 
       {/* MariaDB Persistence & External GLB 3D Asset Vault Console */}
-      <MariaDbAndGlbConsole
-        isOpen={isServerConsoleOpen}
-        onClose={() => setIsServerConsoleOpen(false)}
-        player={engineRef.current?.player || null}
-        engine={engineRef.current || null}
-        onSaveState={async () => {
-          if (!engineRef.current) return;
-          const p = engineRef.current.player;
-          syncManager.updateLocalState({
-            playerId: 'hero_aurion_1',
-            stats: stats,
-            inventory: p.inventory,
-            quests: quests,
-          });
-          const ok = await syncManager.performSync();
-          if (ok) {
-            engineRef.current.addChatMessage('system', 'Persistence', 'Player state & inventory securely persisted to MariaDB!');
-          }
-        }}
-      />
+      <ErrorBoundary componentName="MariaDbAndGlbConsole">
+        <MariaDbAndGlbConsole
+          isOpen={isServerConsoleOpen}
+          onClose={() => setIsServerConsoleOpen(false)}
+          player={engineRef.current?.player || null}
+          engine={engineRef.current || null}
+          onSaveState={async () => {
+            if (!engineRef.current) return;
+            const p = engineRef.current.player;
+            syncManager.updateLocalState({
+              playerId: 'hero_aurion_1',
+              stats: stats,
+              inventory: p.inventory,
+              quests: quests,
+            });
+            const ok = await syncManager.performSync();
+            if (ok) {
+              engineRef.current.addChatMessage('system', 'Persistence', 'Player state & inventory securely persisted to MariaDB!');
+            }
+          }}
+        />
+      </ErrorBoundary>
 
       {/* Region Administration & Politics Modal */}
       {activeNPC && activeNPC.role === 'Territory Envoy' && engineRef.current && (
-        <TerritoryPoliticsModal
-          isOpen={isPoliticsOpen}
-          onClose={() => setIsPoliticsOpen(false)}
-          npc={activeNPC}
-          player={engineRef.current.player}
-          onClaimTerritory={(chunkKey, guardCount, ownerName) => {
-            engineRef.current?.addFloatingText(`Territorium beansprucht!`, engineRef.current.player.position.x, engineRef.current.player.position.y + 3, '#fbbf24', 'xl');
-            engineRef.current?.spawnTerritoryGuards(chunkKey, guardCount, ownerName);
-            setIsPoliticsOpen(false);
-          }}
-          onCompleteQuest={(questId, xp, points) => {
-            // Simplified logic for Political Quests
-            const pStats = { ...stats };
-            pStats.politicsXp += xp;
-            if (pStats.politicsXp >= pStats.politicsLevel * 100) {
-              pStats.politicsLevel++;
-              pStats.politicsXp = 0;
-              engineRef.current?.addFloatingText('Politik Level Up!', engineRef.current.player.position.x, engineRef.current.player.position.y + 3, '#06b6d4', 'xl');
-            }
-            setStats(pStats);
-            engineRef.current?.addFloatingText(`+${xp} Politik XP`, engineRef.current.player.position.x, engineRef.current.player.position.y + 2, '#06b6d4', 'lg');
-            
-            // Note: points saving is handled inside the modal by updating MariaDB directly
-            setIsPoliticsOpen(false);
-          }}
-        />
+        <ErrorBoundary componentName="TerritoryPoliticsModal">
+          <TerritoryPoliticsModal
+            isOpen={isPoliticsOpen}
+            onClose={() => setIsPoliticsOpen(false)}
+            npc={activeNPC}
+            player={engineRef.current.player}
+            onClaimTerritory={(chunkKey, guardCount, ownerName) => {
+              engineRef.current?.addFloatingText(`Territorium beansprucht!`, engineRef.current.player.position.x, engineRef.current.player.position.y + 3, '#fbbf24', 'xl');
+              engineRef.current?.spawnTerritoryGuards(chunkKey, guardCount, ownerName);
+              setIsPoliticsOpen(false);
+            }}
+            onCompleteQuest={(questId, xp, points) => {
+              const pStats = { ...stats };
+              pStats.politicsXp += xp;
+              if (pStats.politicsXp >= pStats.politicsLevel * 100) {
+                pStats.politicsLevel++;
+                pStats.politicsXp = 0;
+                engineRef.current?.addFloatingText('Politik Level Up!', engineRef.current.player.position.x, engineRef.current.player.position.y + 3, '#06b6d4', 'xl');
+              }
+              setStats(pStats);
+              engineRef.current?.addFloatingText(`+${xp} Politik XP`, engineRef.current.player.position.x, engineRef.current.player.position.y + 2, '#06b6d4', 'lg');
+              setIsPoliticsOpen(false);
+            }}
+          />
+        </ErrorBoundary>
       )}
 
       {/* Autonomous NPC Economy & Commodity Markets Dialog */}
-      <NPCEconomyModal
-        isOpen={isEconomyOpen}
-        onClose={() => setIsEconomyOpen(false)}
-        economy={engineRef.current?.npcEconomy || null}
-        playerStats={stats}
-        onPlayerGoldChange={(newGold) => {
-          setStats((prev) => ({ ...prev, gold: newGold }));
-          if (engineRef.current) {
-            engineRef.current.player.stats.gold = newGold;
-          }
-        }}
-        onShowMessage={(msg, color = '#00f0ff') => {
-          if (engineRef.current) {
-            engineRef.current.addFloatingText(
-              msg,
-              engineRef.current.player.position.x,
-              engineRef.current.player.position.y + 2.6,
-              color,
-              'lg'
-            );
-            engineRef.current.addChatMessage('system', 'Markt', msg);
-          }
-        }}
-      />
+      <ErrorBoundary componentName="NPCEconomyModal">
+        <NPCEconomyModal
+          isOpen={isEconomyOpen}
+          onClose={() => setIsEconomyOpen(false)}
+          economy={engineRef.current?.npcEconomy || null}
+          playerStats={stats}
+          onPlayerGoldChange={(newGold) => {
+            setStats((prev) => ({ ...prev, gold: newGold }));
+            if (engineRef.current) {
+              engineRef.current.player.stats.gold = newGold;
+            }
+          }}
+          onShowMessage={(msg, color = '#00f0ff') => {
+            if (engineRef.current) {
+              engineRef.current.addFloatingText(
+                msg,
+                engineRef.current.player.position.x,
+                engineRef.current.player.position.y + 2.6,
+                color,
+                'lg'
+              );
+              engineRef.current.addChatMessage('system', 'Markt', msg);
+            }
+          }}
+          playerInventory={inventory}
+          onUpdatePlayerInventory={(newInv) => {
+            setInventory(newInv);
+            if (engineRef.current) {
+              engineRef.current.player.inventory = newInv;
+            }
+          }}
+          buybackQueue={buybackQueue}
+          onUpdateBuybackQueue={(newQueue) => setBuybackQueue(newQueue)}
+        />
+      </ErrorBoundary>
 
       {/* Determinism & Simulation State Desync Debugging Overlay */}
-      <DeterminismDebugOverlay
-        isOpen={isDeterminismOverlayOpen}
-        onClose={() => setIsDeterminismOverlayOpen(false)}
-        economy={engineRef.current?.npcEconomy || null}
-        onTogglePathfindingDebug={() => {
-          if (engineRef.current) {
-            const active = engineRef.current.togglePathfindingDebug();
-            setIsPathfindingDebugActive(active);
-          }
-        }}
-        isPathfindingDebugActive={isPathfindingDebugActive}
-        onShowNotification={(msg, color = '#00f0ff') => {
-          if (engineRef.current) {
-            engineRef.current.addFloatingText(
-              msg,
-              engineRef.current.player.position.x,
-              engineRef.current.player.position.y + 2.8,
-              color,
-              'md'
-            );
-            engineRef.current.addChatMessage('system', 'Sync', msg);
-          }
-        }}
-      />
+      <ErrorBoundary componentName="DeterminismDebugOverlay">
+        <DeterminismDebugOverlay
+          isOpen={isDeterminismOverlayOpen}
+          onClose={() => setIsDeterminismOverlayOpen(false)}
+          economy={engineRef.current?.npcEconomy || null}
+          onTogglePathfindingDebug={() => {
+            if (engineRef.current) {
+              const active = engineRef.current.togglePathfindingDebug();
+              setIsPathfindingDebugActive(active);
+            }
+          }}
+          isPathfindingDebugActive={isPathfindingDebugActive}
+          onShowNotification={(msg, color = '#00f0ff') => {
+            if (engineRef.current) {
+              engineRef.current.addFloatingText(
+                msg,
+                engineRef.current.player.position.x,
+                engineRef.current.player.position.y + 2.8,
+                color,
+                'md'
+              );
+              engineRef.current.addChatMessage('system', 'Sync', msg);
+            }
+          }}
+        />
+      </ErrorBoundary>
+
+      <ErrorBoundary componentName="HomesteadBuilderModal">
+        <HomesteadBuilderModal
+          isOpen={isHomesteadOpen}
+          onClose={() => setIsHomesteadOpen(false)}
+          blueprints={HOMESTEAD_BLUEPRINTS}
+          inventory={inventory}
+          playerGold={stats.gold}
+          onBuild={(blueprintId) => {
+            if (engineRef.current) {
+              const playerPos = engineRef.current.player.position;
+              engineRef.current.landscape.chunkManager.placeHomesteadStructure(
+                playerPos.x + Math.sin(engineRef.current.player.facingAngle) * 5,
+                playerPos.z + Math.cos(engineRef.current.player.facingAngle) * 5,
+                blueprintId,
+                'Held von Aurion'
+              );
+              engineRef.current.addFloatingText(
+                'Gebäude errichtet!',
+                playerPos.x,
+                playerPos.y + 3,
+                '#d4af37',
+                'xl'
+              );
+              engineRef.current.addChatMessage('system', 'Bauamt', 'Neues Homestead-Gebäude wurde erfolgreich errichtet.');
+              
+              // Pay costs
+              const bp = HOMESTEAD_BLUEPRINTS.find(b => b.id === blueprintId);
+              if (bp) {
+                engineRef.current.player.stats.gold -= bp.costGold;
+                setStats({ ...engineRef.current.player.stats });
+              }
+            }
+          }}
+        />
+      </ErrorBoundary>
+      {/* Guild Management, Shared Bank & Sovereign Kingdom Consolidation Modal */}
+      <ErrorBoundary componentName="GuildManagementModal">
+        <GuildManagementModal
+          isOpen={isGuildOpen}
+          onClose={() => setIsGuildOpen(false)}
+          playerStats={stats}
+          onUpdatePlayerStats={(newStats) => {
+            setStats((prev) => ({ ...prev, ...newStats }));
+            if (engineRef.current) {
+              Object.assign(engineRef.current.player.stats, newStats);
+            }
+          }}
+          playerInventory={inventory}
+          onUpdatePlayerInventory={(newInv) => {
+            setInventory(newInv);
+            if (engineRef.current) {
+              engineRef.current.player.inventory = newInv;
+            }
+          }}
+          worldChunks={engineRef.current?.worldChunkManager?.getAllChunks() || []}
+          onConsolidateKingdomSuccess={({ kingdomName, chunkKeys }) => {
+            if (engineRef.current) {
+              chunkKeys.forEach((k) => {
+                const c = engineRef.current?.worldChunkManager?.getChunk(k);
+                if (c) c.kingdom = kingdomName;
+              });
+              engineRef.current.addFloatingText(
+                `👑 ${kingdomName} gegründet!`,
+                engineRef.current.player.position.x,
+                engineRef.current.player.position.y + 3.2,
+                '#00f0ff',
+                'xl'
+              );
+              engineRef.current.addChatMessage(
+                'guild',
+                'Königlicher Herold',
+                `👑 ${chunkKeys.length} Gebiete wurden unter der Gildenleitung zum Großkönigreich '${kingdomName}' vereint!`
+              );
+            }
+          }}
+          onAddFloatingText={(text, color = '#00f0ff') => {
+            if (engineRef.current) {
+              engineRef.current.addFloatingText(
+                text,
+                engineRef.current.player.position.x,
+                engineRef.current.player.position.y + 2.4,
+                color,
+                'lg'
+              );
+            }
+          }}
+          onAddChatMessage={(channel, sender, text) => {
+            if (engineRef.current) {
+              engineRef.current.addChatMessage(channel as any, sender, text);
+            }
+          }}
+        />
+      </ErrorBoundary>
     </main>
   );
 }

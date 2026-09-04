@@ -17,11 +17,13 @@ import {
   Sword,
   CheckCircle2,
   AlertTriangle,
+  RotateCcw,
+  History,
 } from 'lucide-react';
 import { AutonomousNPCEconomy, COMMODITIES, RegionalMarketHub } from '../engine/economy/AutonomousNPCEconomy';
 import { dynamicEconomyQuestEngine, DynamicEconomyQuest } from '../engine/economy/DynamicEconomyQuestEngine';
 import { caravanSecuritySystem } from '../engine/economy/CaravanSecuritySystem';
-import { PlayerStats } from '../types';
+import { PlayerStats, RPGItem, SoldBuybackItem } from '../types';
 
 interface NPCEconomyModalProps {
   isOpen: boolean;
@@ -30,6 +32,10 @@ interface NPCEconomyModalProps {
   playerStats: PlayerStats;
   onPlayerGoldChange: (newGold: number) => void;
   onShowMessage: (msg: string, color?: string) => void;
+  playerInventory?: RPGItem[];
+  onUpdatePlayerInventory?: (inventory: RPGItem[]) => void;
+  buybackQueue?: SoldBuybackItem[];
+  onUpdateBuybackQueue?: (queue: SoldBuybackItem[]) => void;
 }
 
 export const NPCEconomyModal: React.FC<NPCEconomyModalProps> = ({
@@ -39,11 +45,79 @@ export const NPCEconomyModal: React.FC<NPCEconomyModalProps> = ({
   playerStats,
   onPlayerGoldChange,
   onShowMessage,
+  playerInventory = [],
+  onUpdatePlayerInventory,
+  buybackQueue = [],
+  onUpdateBuybackQueue,
 }) => {
-  const [activeTab, setActiveTab] = useState<'markets' | 'quests' | 'security' | 'census' | 'evolution' | 'treasury'>('markets');
+  const [activeTab, setActiveTab] = useState<'markets' | 'buyback' | 'quests' | 'security' | 'census' | 'evolution' | 'treasury'>('markets');
   const [selectedHubId, setSelectedHubId] = useState<string>('sun_spire');
   const [tradeQuantity, setTradeQuantity] = useState<number>(1);
+  const [localBuybackList, setLocalBuybackList] = useState<SoldBuybackItem[]>(buybackQueue);
   const [, setTicker] = useState<number>(0);
+
+  // Synchronize local and parent buyback queue
+  useEffect(() => {
+    setLocalBuybackList(buybackQueue);
+  }, [buybackQueue]);
+
+  const handleSellInventoryItem = (itemToSell: RPGItem) => {
+    const saleValue = Math.max(1, Math.floor(itemToSell.valueGold || 10));
+    
+    // 1. Remove 1 copy from player inventory
+    if (onUpdatePlayerInventory) {
+      const idx = playerInventory.findIndex((i) => i.id === itemToSell.id);
+      if (idx !== -1) {
+        const newInv = [...playerInventory];
+        newInv.splice(idx, 1);
+        onUpdatePlayerInventory(newInv);
+      }
+    }
+
+    // 2. Add gold to player
+    onPlayerGoldChange(playerStats.gold + saleValue);
+
+    // 3. Push to buyback queue (max 10 items)
+    const newRecord: SoldBuybackItem = {
+      id: `buyback_${itemToSell.id}_${Date.now()}`,
+      item: itemToSell,
+      soldPrice: saleValue,
+      soldAtTimestamp: Date.now(),
+      soldToHubId: selectedHubId,
+    };
+
+    const updatedQueue = [newRecord, ...localBuybackList].slice(0, 10);
+    setLocalBuybackList(updatedQueue);
+    if (onUpdateBuybackQueue) {
+      onUpdateBuybackQueue(updatedQueue);
+    }
+
+    onShowMessage(`[${itemToSell.name}] für ${saleValue} Gold an den Markt verkauft (im Rückkauf gesichert)!`, '#10b981');
+  };
+
+  const handleBuybackItem = (record: SoldBuybackItem) => {
+    if (playerStats.gold < record.soldPrice) {
+      onShowMessage(`Nicht genug Gold! Benötigt: ${record.soldPrice} Gold.`, '#ef4444');
+      return;
+    }
+
+    // 1. Deduct exact original sale price
+    onPlayerGoldChange(playerStats.gold - record.soldPrice);
+
+    // 2. Return item to player inventory
+    if (onUpdatePlayerInventory) {
+      onUpdatePlayerInventory([...playerInventory, record.item]);
+    }
+
+    // 3. Remove from buyback queue
+    const updatedQueue = localBuybackList.filter((b) => b.id !== record.id);
+    setLocalBuybackList(updatedQueue);
+    if (onUpdateBuybackQueue) {
+      onUpdateBuybackQueue(updatedQueue);
+    }
+
+    onShowMessage(`[${record.item.name}] für den Originalpreis von ${record.soldPrice} Gold zurückgekauft!`, '#00f0ff');
+  };
 
   // Force re-render periodically while open to reflect live economy ticks
   useEffect(() => {
@@ -148,6 +222,16 @@ export const NPCEconomyModal: React.FC<NPCEconomyModalProps> = ({
             }`}
           >
             <Store className="w-3.5 h-3.5" /> Dynamische Märkte
+          </button>
+          <button
+            onClick={() => setActiveTab('buyback')}
+            className={`px-3 py-2 rounded-t-lg font-serif text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'buyback'
+                ? 'bg-[#0a1828] text-amber-300 border-t-2 border-x border-amber-400 border-b-transparent shadow'
+                : 'text-gray-400 hover:text-amber-200'
+            }`}
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-amber-400" /> Rückkauf / Buyback ({localBuybackList.length}/10)
           </button>
           <button
             onClick={() => setActiveTab('quests')}
@@ -325,6 +409,170 @@ export const NPCEconomyModal: React.FC<NPCEconomyModalProps> = ({
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: BUYBACK (RÜCKKAUF LETZTE 10 GEGENSTÄNDE) */}
+          {activeTab === 'buyback' && (
+            <div className="space-y-6">
+              {/* Header Info Banner */}
+              <div className="p-4 rounded-xl bg-gradient-to-r from-[#0a1b2a] via-[#0c2838] to-[#0a1b2a] border border-amber-500/40 flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-950/60 border border-amber-400/40 flex items-center justify-center text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.3)]">
+                    <RotateCcw className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-serif font-bold text-amber-100 flex items-center gap-2">
+                      Händler-Rückkauf / NPC Buyback Ledger
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                        {localBuybackList.length}/10 Plätze belegt
+                      </span>
+                    </h3>
+                    <p className="text-xs text-amber-200/70">
+                      Erlaube die Rücknahme der letzten 10 an NPCs/Märkte verkauften Gegenstände zum exakten Original-Verkaufspreis während der aktuellen Sitzung.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-xs text-gray-300 font-mono bg-black/50 px-3 py-1.5 rounded-lg border border-gray-700">
+                  <Coins className="w-4 h-4 text-amber-400" />
+                  <span>Verfügbares Gold: <strong className="text-amber-300">{playerStats.gold.toLocaleString()} G</strong></span>
+                </div>
+              </div>
+
+              {/* Main Content Layout: Buyback Queue + Quick Sell Drawer */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Left 2 Cols: Sold items waiting in Buyback queue */}
+                <div className="lg:col-span-2 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-serif font-bold text-amber-200 uppercase tracking-wider flex items-center gap-2">
+                      <History className="w-4 h-4 text-amber-400" /> Letzte 10 verkaufte Gegenstände (Rückkaufbereit)
+                    </h4>
+                    <span className="text-[11px] text-gray-400">
+                      Garantierter 1:1 Festpreis ohne Händleraufschlag
+                    </span>
+                  </div>
+
+                  {localBuybackList.length === 0 ? (
+                    <div className="p-8 rounded-xl bg-black/40 border border-gray-800 text-center space-y-2">
+                      <Package className="w-10 h-10 text-gray-600 mx-auto" />
+                      <div className="text-sm font-serif text-gray-300">Keine Gegenstände im Rückkauf-Speicher</div>
+                      <p className="text-xs text-gray-500 max-w-md mx-auto">
+                        Verkaufe Gegenstände aus deinem Inventar (rechte Leiste oder bei Händlern). Die letzten 10 verkauften Gegenstände verbleiben hier im Rückkauf.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {localBuybackList.map((record, idx) => {
+                        const canAfford = playerStats.gold >= record.soldPrice;
+                        const timeAgoMin = Math.max(0, Math.floor((Date.now() - record.soldAtTimestamp) / 60000));
+                        return (
+                          <div
+                            key={record.id}
+                            className="p-3.5 rounded-xl bg-black/60 border border-amber-500/20 hover:border-amber-400/50 transition-all flex items-center justify-between gap-4"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-lg bg-gray-900 border border-gray-700 flex items-center justify-center text-xl shrink-0 shadow">
+                                {record.item.icon || '📦'}
+                              </div>
+                              <div>
+                                <div className="text-sm font-serif font-bold text-amber-100 flex items-center gap-2">
+                                  #{idx + 1} {record.item.name}
+                                  <span
+                                    className={`px-1.5 py-0.2 rounded text-[9px] uppercase font-mono font-bold ${
+                                      record.item.rarity === 'legendary'
+                                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                        : record.item.rarity === 'epic'
+                                        ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                                        : record.item.rarity === 'rare'
+                                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                                        : 'bg-gray-800 text-gray-300'
+                                    }`}
+                                  >
+                                    {record.item.rarity || 'common'}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-gray-400 flex items-center gap-3 mt-0.5">
+                                  <span>{record.item.slot || 'misc'}</span>
+                                  <span>•</span>
+                                  <span>Vor {timeAgoMin === 0 ? 'wenigen Sekunden' : `${timeAgoMin} Min.`}</span>
+                                  <span>•</span>
+                                  <span className="text-gray-500">Hub: {record.soldToHubId}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-3 shrink-0">
+                              <div className="text-right">
+                                <div className="text-xs text-gray-400">Rückkauf-Preis:</div>
+                                <div className="text-sm font-mono font-bold text-amber-300 flex items-center justify-end gap-1">
+                                  <Coins className="w-3.5 h-3.5 text-amber-400" />
+                                  {record.soldPrice} Gold
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={() => handleBuybackItem(record)}
+                                disabled={!canAfford}
+                                className="px-3.5 py-2 rounded-lg bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-black font-serif font-bold text-xs transition-all shadow disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                Zurückkaufen
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Right Col: Player inventory quick-sell drawer */}
+                <div className="p-4 rounded-xl bg-black/50 border border-gray-800 flex flex-col space-y-3">
+                  <div className="flex items-center justify-between border-b border-gray-800 pb-2">
+                    <h4 className="text-xs font-serif font-bold text-gray-200 flex items-center gap-1.5">
+                      <Package className="w-4 h-4 text-cyan-400" /> Spieler-Inventar (Schnellverkauf)
+                    </h4>
+                    <span className="text-[10px] font-mono text-gray-400">{playerInventory.length} Items</span>
+                  </div>
+                  <p className="text-[11px] text-gray-400">
+                    Klicke auf einen Gegenstand, um ihn an den Markt zu verkaufen. Er wird automatisch oben im 10-Plätze-Rückkauf registriert!
+                  </p>
+
+                  <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                    {playerInventory.length === 0 ? (
+                      <div className="p-6 text-center text-xs text-gray-500 font-serif">
+                        Inventar ist leer.
+                      </div>
+                    ) : (
+                      playerInventory.map((item, idx) => {
+                        const val = Math.max(1, Math.floor(item.valueGold || 10));
+                        return (
+                          <div
+                            key={`${item.id}_${idx}`}
+                            className="p-2 rounded-lg bg-gray-950/80 border border-gray-800 hover:border-cyan-400/50 flex items-center justify-between gap-2 transition-all"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-lg shrink-0">{item.icon || '📦'}</span>
+                              <div className="truncate">
+                                <div className="text-xs font-serif font-bold text-gray-200 truncate">{item.name}</div>
+                                <div className="text-[10px] text-gray-500">{item.slot || 'misc'}</div>
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={() => handleSellInventoryItem(item)}
+                              className="px-2.5 py-1 rounded bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 text-[11px] font-mono font-bold shrink-0 cursor-pointer flex items-center gap-1"
+                            >
+                              +{val} G
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}

@@ -27,7 +27,13 @@ export type ParticleEffectType =
   | 'explosion'
   | 'heal_sparkle'
   | 'blood_oil'
-  | 'teleport_warp';
+  | 'teleport_warp'
+  | 'aurion_blast'
+  | 'holy_nova'
+  | 'electric_spark'
+  | 'frost_shatter'
+  | 'fire_impact'
+  | 'physical_hit';
 
 export class ParticleSystem {
   public scene: THREE.Scene;
@@ -161,6 +167,24 @@ export class ParticleSystem {
         break;
       case 'teleport_warp':
         this.emitTeleportWarp(basePos, color, 50 * countMultiplier);
+        break;
+      case 'aurion_blast':
+        this.emitAurionBlast(basePos, color, 70 * countMultiplier);
+        break;
+      case 'holy_nova':
+        this.emitHolyNova(basePos, 80 * countMultiplier);
+        break;
+      case 'electric_spark':
+        this.emitElectricSparks(basePos, 35 * countMultiplier);
+        break;
+      case 'frost_shatter':
+        this.emitFrostShatter(basePos, 45 * countMultiplier);
+        break;
+      case 'fire_impact':
+        this.emitFireImpact(basePos, 40 * countMultiplier);
+        break;
+      case 'physical_hit':
+        this.emitPhysicalHit(basePos, 30 * countMultiplier);
         break;
     }
   }
@@ -471,6 +495,159 @@ export class ParticleSystem {
         maxLife: 0.8 + Math.random() * 0.3,
         rotation: angle,
         rotSpeed: 4.0,
+      });
+    }
+  }
+
+  private emitAurionBlast(pos: THREE.Vector3, color: THREE.Color, count: number) {
+    // Powerful outward cyan/turquoise shockwave
+    for (let i = 0; i < count; i++) {
+      if (this.particles.length >= this.maxParticles) break;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.random() * Math.PI * 0.7; // mostly horizontal/upward
+      const speed = 8.0 + Math.random() * 12.0;
+
+      const pColor = Math.random() > 0.3 ? new THREE.Color(0x00f0ff) : new THREE.Color(0x14b8a6);
+
+      this.particles.push({
+        position: pos.clone().add(new THREE.Vector3(0, 1.0, 0)),
+        velocity: new THREE.Vector3(
+          Math.sin(phi) * Math.cos(theta) * speed,
+          Math.cos(phi) * speed,
+          Math.sin(phi) * Math.sin(theta) * speed
+        ),
+        acceleration: new THREE.Vector3(0, -4.0, 0), // gravity
+        color: pColor.lerp(color, Math.random() * 0.3), // blend with skill color
+        size: 0.8 + Math.random() * 0.7,
+        initialSize: 0.8 + Math.random() * 0.7,
+        alpha: 1.0,
+        initialAlpha: 1.0,
+        life: 0,
+        maxLife: 0.5 + Math.random() * 0.3,
+        rotation: Math.random() * Math.PI,
+        rotSpeed: (Math.random() - 0.5) * 8.0,
+      });
+    }
+  }
+
+  private emitHolyNova(pos: THREE.Vector3, count: number) {
+    // Large expanding ring of light
+    for (let i = 0; i < count; i++) {
+      if (this.particles.length >= this.maxParticles) break;
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.1;
+      const speed = 15.0 + Math.random() * 2.0;
+
+      this.particles.push({
+        position: pos.clone().add(new THREE.Vector3(Math.cos(angle)*0.5, 0.5 + Math.random()*0.2, Math.sin(angle)*0.5)),
+        velocity: new THREE.Vector3(Math.cos(angle) * speed, Math.random() * 1.5, Math.sin(angle) * speed),
+        acceleration: new THREE.Vector3(-Math.cos(angle) * 12.0, 0, -Math.sin(angle) * 12.0), // high drag slowing it down quickly
+        color: new THREE.Color(0xfde68a).lerp(new THREE.Color(0xffffff), Math.random()),
+        size: 0.7 + Math.random() * 0.5,
+        initialSize: 0.7 + Math.random() * 0.5,
+        alpha: 1.0,
+        initialAlpha: 1.0,
+        life: 0,
+        maxLife: 0.7 + Math.random() * 0.2,
+        rotation: angle,
+        rotSpeed: 1.0,
+      });
+    }
+  }
+
+  private emitElectricSparks(pos: THREE.Vector3, count: number) {
+    for (let i = 0; i < count; i++) {
+      if (this.particles.length >= this.maxParticles) break;
+      const speed = 15.0 + Math.random() * 10.0;
+      const phi = Math.random() * Math.PI * 2;
+      const theta = Math.random() * Math.PI;
+
+      this.particles.push({
+        position: pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.5, 0.5 + (Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.5)),
+        velocity: new THREE.Vector3(
+          Math.sin(theta) * Math.cos(phi) * speed,
+          Math.cos(theta) * speed,
+          Math.sin(theta) * Math.sin(phi) * speed
+        ),
+        acceleration: new THREE.Vector3(0, -5.0, 0), // Slight gravity
+        color: Math.random() > 0.5 ? new THREE.Color(0xfde047) : new THREE.Color(0x60a5fa), // Yellow/Blue sparks
+        size: 0.15 + Math.random() * 0.15,
+        initialSize: 0.15 + Math.random() * 0.15,
+        alpha: 1.0,
+        initialAlpha: 1.0,
+        life: 0,
+        maxLife: 0.2 + Math.random() * 0.15, // Very short-lived
+        rotation: Math.random() * Math.PI,
+        rotSpeed: 10.0,
+      });
+    }
+  }
+
+  private emitFrostShatter(pos: THREE.Vector3, count: number) {
+    for (let i = 0; i < count; i++) {
+      if (this.particles.length >= this.maxParticles) break;
+      const speed = 6.0 + Math.random() * 6.0;
+      const angle = Math.random() * Math.PI * 2;
+      const height = Math.random() * 1.5;
+
+      this.particles.push({
+        position: pos.clone().add(new THREE.Vector3(Math.cos(angle)*0.2, height, Math.sin(angle)*0.2)),
+        velocity: new THREE.Vector3(Math.cos(angle) * speed, -2.0 + Math.random() * 4.0, Math.sin(angle) * speed),
+        acceleration: new THREE.Vector3(0, -15.0, 0), // Heavy gravity for shards
+        color: new THREE.Color(0xe0f2fe).lerp(new THREE.Color(0x38bdf8), Math.random()),
+        size: 0.3 + Math.random() * 0.3,
+        initialSize: 0.3 + Math.random() * 0.3,
+        alpha: 0.9,
+        initialAlpha: 0.9,
+        life: 0,
+        maxLife: 0.4 + Math.random() * 0.3,
+        rotation: Math.random() * Math.PI,
+        rotSpeed: (Math.random() - 0.5) * 8.0,
+      });
+    }
+  }
+
+  private emitFireImpact(pos: THREE.Vector3, count: number) {
+    for (let i = 0; i < count; i++) {
+      if (this.particles.length >= this.maxParticles) break;
+      const speed = 4.0 + Math.random() * 6.0;
+      const angle = Math.random() * Math.PI * 2;
+
+      this.particles.push({
+        position: pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.5 + Math.random() * 0.5, (Math.random() - 0.5) * 0.3)),
+        velocity: new THREE.Vector3(Math.cos(angle) * speed, 2.0 + Math.random() * 5.0, Math.sin(angle) * speed),
+        acceleration: new THREE.Vector3(0, 4.0, 0), // Floats up
+        color: Math.random() > 0.4 ? new THREE.Color(0xf97316) : new THREE.Color(0xef4444), // Orange/Red
+        size: 0.6 + Math.random() * 0.6,
+        initialSize: 0.6 + Math.random() * 0.6,
+        alpha: 0.8,
+        initialAlpha: 0.8,
+        life: 0,
+        maxLife: 0.5 + Math.random() * 0.3,
+        rotation: Math.random() * Math.PI,
+        rotSpeed: (Math.random() - 0.5) * 2.0,
+      });
+    }
+  }
+
+  private emitPhysicalHit(pos: THREE.Vector3, count: number) {
+    for (let i = 0; i < count; i++) {
+      if (this.particles.length >= this.maxParticles) break;
+      const speed = 3.0 + Math.random() * 5.0;
+      const angle = Math.random() * Math.PI * 2;
+
+      this.particles.push({
+        position: pos.clone().add(new THREE.Vector3(0, 1.0, 0)),
+        velocity: new THREE.Vector3(Math.cos(angle) * speed, Math.random() * 3.0, Math.sin(angle) * speed),
+        acceleration: new THREE.Vector3(-Math.cos(angle) * 8.0, -10.0, -Math.sin(angle) * 8.0), // Drag and gravity
+        color: new THREE.Color(0xd4af37).lerp(new THREE.Color(0xfef08a), Math.random()), // Muted gold/sandstone hit
+        size: 0.2 + Math.random() * 0.2,
+        initialSize: 0.2 + Math.random() * 0.2,
+        alpha: 1.0,
+        initialAlpha: 1.0,
+        life: 0,
+        maxLife: 0.3 + Math.random() * 0.2,
+        rotation: Math.random() * Math.PI,
+        rotSpeed: (Math.random() - 0.5) * 4.0,
       });
     }
   }

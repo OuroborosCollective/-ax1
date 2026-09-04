@@ -140,39 +140,198 @@ export class MobManager {
       drops.push(RPG_ITEMS_DATABASE.find((i) => i.id === 'item_staff_epic')!);
     }
 
-    // 3D Geometry for Mob
+    // === 3D ARTICULATED PROCEDURAL MESH GENERATION FOR MOBS ===
     const mobMat = new THREE.MeshStandardMaterial({
       color: colorHex,
-      metalness: 0.8,
-      roughness: 0.25,
+      metalness: 0.82,
+      roughness: 0.28,
     });
-
-    let bodyGeo: THREE.BufferGeometry;
-    if (type === 'corrupted_golem' || type === 'centurion_elite') {
-      bodyGeo = new THREE.BoxGeometry(radius * 1.5, radius * 2.0, radius * 1.2);
-    } else if (type === 'aether_wisp') {
-      bodyGeo = new THREE.OctahedronGeometry(radius, 0);
-    } else {
-      bodyGeo = new THREE.CylinderGeometry(radius * 0.6, radius * 0.9, radius * 1.8, 6);
-    }
-
-    const bodyMesh = new THREE.Mesh(bodyGeo, mobMat);
-    bodyMesh.position.y = radius * 1.0;
-    group.add(bodyMesh);
-
-    // Glowing Core/Eyes
-    const eyeMat = new THREE.MeshStandardMaterial({
+    const darkStoneMat = new THREE.MeshStandardMaterial({
+      color: 0x1c1917,
+      roughness: 0.85,
+    });
+    const goldTrimMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b,
+      metalness: 0.95,
+      roughness: 0.2,
+    });
+    const glowMat = new THREE.MeshStandardMaterial({
+      color: 0x00f0ff,
+      emissive: 0x00f0ff,
+      emissiveIntensity: 2.2,
+    });
+    const redGlowMat = new THREE.MeshStandardMaterial({
       color: 0xef4444,
       emissive: 0xff0000,
-      emissiveIntensity: 2.0,
+      emissiveIntensity: 2.4,
     });
-    const eyeGeo = new THREE.SphereGeometry(0.2, 8, 8);
-    const eye1 = new THREE.Mesh(eyeGeo, eyeMat);
-    eye1.position.set(-0.3, radius * 1.2, radius * 0.6);
-    const eye2 = new THREE.Mesh(eyeGeo, eyeMat);
-    eye2.position.set(0.3, radius * 1.2, radius * 0.6);
-    group.add(eye1);
-    group.add(eye2);
+
+    let bodyMesh: THREE.Mesh;
+
+    if (type === 'aether_wisp') {
+      // Astralwisp: Floating crystalline core with counter-rotating celestial gimbal rings and orbit motes
+      const coreGeo = new THREE.OctahedronGeometry(radius * 0.7, 1);
+      bodyMesh = new THREE.Mesh(coreGeo, glowMat);
+      bodyMesh.position.y = radius * 1.2;
+      group.add(bodyMesh);
+
+      const innerRingGeo = new THREE.TorusGeometry(radius * 0.95, 0.04, 6, 16);
+      const innerRing = new THREE.Mesh(innerRingGeo, goldTrimMat);
+      innerRing.rotation.x = Math.PI / 4;
+      bodyMesh.add(innerRing);
+
+      const outerRingGeo = new THREE.TorusGeometry(radius * 1.25, 0.03, 6, 16);
+      const outerRing = new THREE.Mesh(outerRingGeo, mobMat);
+      outerRing.rotation.y = Math.PI / 3;
+      bodyMesh.add(outerRing);
+
+      // Orbital Aether Sparks
+      for (let i = 0; i < 3; i++) {
+        const shardGeo = new THREE.TetrahedronGeometry(0.12, 0);
+        const shard = new THREE.Mesh(shardGeo, glowMat);
+        const ang = (i * Math.PI * 2) / 3;
+        shard.position.set(Math.cos(ang) * radius * 1.1, Math.sin(ang) * 0.3, Math.sin(ang) * radius * 1.1);
+        bodyMesh.add(shard);
+      }
+    } else if (type === 'clockwork_stalker') {
+      // Clockwork Stalker: Quadruped brass arachnid/feline construct with optical head
+      const chassisGeo = new THREE.CylinderGeometry(radius * 0.5, radius * 0.7, radius * 1.1, 6);
+      chassisGeo.rotateX(Math.PI / 2);
+      bodyMesh = new THREE.Mesh(chassisGeo, mobMat);
+      bodyMesh.position.y = radius * 0.9;
+      group.add(bodyMesh);
+
+      // Optical Head
+      const headGeo = new THREE.ConeGeometry(radius * 0.35, radius * 0.7, 5);
+      headGeo.rotateX(Math.PI / 2);
+      const head = new THREE.Mesh(headGeo, goldTrimMat);
+      head.position.set(0, 0.1, radius * 0.7);
+      bodyMesh.add(head);
+
+      // Tri-lens Glowing Ocular Sensor
+      const triLensGeo = new THREE.BoxGeometry(0.18, 0.08, 0.08);
+      const triLens = new THREE.Mesh(triLensGeo, glowMat);
+      triLens.position.set(0, 0.05, radius * 0.9);
+      bodyMesh.add(triLens);
+
+      // 4 Articulated Brass Taloned Legs
+      const legAngles = [-0.6, 0.6, -2.4, 2.4];
+      legAngles.forEach((ang) => {
+        const legUpperGeo = new THREE.CylinderGeometry(0.08, 0.06, radius * 0.9, 6);
+        const leg = new THREE.Mesh(legUpperGeo, mobMat);
+        leg.position.set(Math.sin(ang) * radius * 0.7, -radius * 0.35, Math.cos(ang) * radius * 0.6);
+        leg.rotation.z = ang > 0 ? -0.4 : 0.4;
+        bodyMesh.add(leg);
+      });
+
+      // Steam Exhaust Boiler
+      const exhaustGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.45, 6);
+      const exhaust = new THREE.Mesh(exhaustGeo, darkStoneMat);
+      exhaust.position.set(0, radius * 0.4, -radius * 0.4);
+      bodyMesh.add(exhaust);
+    } else if (type === 'corrupted_golem') {
+      // Corrupted Stone & Iron Golem: Heavy weathered stone colossus with corrupted crystal cluster
+      const torsoGeo = new THREE.CylinderGeometry(radius * 0.8, radius * 0.65, radius * 1.5, 7);
+      bodyMesh = new THREE.Mesh(torsoGeo, darkStoneMat);
+      bodyMesh.position.y = radius * 1.1;
+      group.add(bodyMesh);
+
+      // Corrupted Fissure Core
+      const coreGeo = new THREE.BoxGeometry(0.18, radius * 1.0, 0.22);
+      const core = new THREE.Mesh(coreGeo, redGlowMat);
+      core.position.set(0, 0, radius * 0.65);
+      bodyMesh.add(core);
+
+      // Stone Head with Glowing Eye Slits
+      const headGeo = new THREE.BoxGeometry(radius * 0.65, radius * 0.45, radius * 0.65);
+      const head = new THREE.Mesh(headGeo, darkStoneMat);
+      head.position.set(0, radius * 0.9, 0.1);
+      bodyMesh.add(head);
+
+      const eyesGeo = new THREE.BoxGeometry(radius * 0.4, 0.08, 0.1);
+      const eyes = new THREE.Mesh(eyesGeo, redGlowMat);
+      eyes.position.set(0, radius * 0.9, radius * 0.4);
+      bodyMesh.add(eyes);
+
+      // Asymmetrical Corrupted Crystals on Right Shoulder
+      const crystalGeo = new THREE.ConeGeometry(0.24, radius * 0.8, 4);
+      const crystal = new THREE.Mesh(crystalGeo, redGlowMat);
+      crystal.position.set(radius * 0.85, radius * 0.8, 0);
+      crystal.rotation.z = -0.3;
+      bodyMesh.add(crystal);
+
+      // Massive Stone Fists
+      const armGeo = new THREE.CylinderGeometry(0.22, 0.28, radius * 1.1, 6);
+      const leftArm = new THREE.Mesh(armGeo, darkStoneMat);
+      leftArm.position.set(-radius * 0.95, -radius * 0.1, 0.2);
+      bodyMesh.add(leftArm);
+
+      const rightArm = new THREE.Mesh(armGeo, darkStoneMat);
+      rightArm.position.set(radius * 0.95, -radius * 0.1, 0.2);
+      bodyMesh.add(rightArm);
+    } else if (type === 'centurion_elite') {
+      // Centurion Overlord / Runenwächter: Segmented Praetorian sentinel
+      const torsoGeo = new THREE.CylinderGeometry(radius * 0.55, radius * 0.45, radius * 1.4, 8);
+      bodyMesh = new THREE.Mesh(torsoGeo, mobMat);
+      bodyMesh.position.y = radius * 1.2;
+      group.add(bodyMesh);
+
+      // Centurion Helm with Golden Crest
+      const helmGeo = new THREE.CylinderGeometry(radius * 0.35, radius * 0.32, radius * 0.6, 8);
+      const helm = new THREE.Mesh(helmGeo, mobMat);
+      helm.position.set(0, radius * 0.95, 0);
+      bodyMesh.add(helm);
+
+      const crestGeo = new THREE.BoxGeometry(0.08, radius * 0.4, radius * 0.8);
+      const crest = new THREE.Mesh(crestGeo, goldTrimMat);
+      crest.position.set(0, radius * 1.25, 0);
+      bodyMesh.add(crest);
+
+      const visorGeo = new THREE.BoxGeometry(radius * 0.45, 0.08, 0.12);
+      const visor = new THREE.Mesh(visorGeo, redGlowMat);
+      visor.position.set(0, radius * 0.95, radius * 0.3);
+      bodyMesh.add(visor);
+
+      // Double Fluted Pauldrons
+      const pauldronGeo = new THREE.ConeGeometry(radius * 0.35, radius * 0.5, 6);
+      const leftP = new THREE.Mesh(pauldronGeo, goldTrimMat);
+      leftP.position.set(-radius * 0.75, radius * 0.65, 0);
+      leftP.rotation.z = Math.PI / 4;
+      bodyMesh.add(leftP);
+
+      const rightP = new THREE.Mesh(pauldronGeo, goldTrimMat);
+      rightP.position.set(radius * 0.75, radius * 0.65, 0);
+      rightP.rotation.z = -Math.PI / 4;
+      bodyMesh.add(rightP);
+
+      // Runic Greatblade
+      const bladeGeo = new THREE.BoxGeometry(0.12, radius * 1.8, 0.04);
+      const blade = new THREE.Mesh(bladeGeo, mobMat);
+      blade.position.set(radius * 0.85, 0, radius * 0.4);
+      bodyMesh.add(blade);
+
+      const bladeGlowGeo = new THREE.BoxGeometry(0.04, radius * 1.4, 0.05);
+      const bladeGlow = new THREE.Mesh(bladeGlowGeo, redGlowMat);
+      bladeGlow.position.set(radius * 0.85, 0, radius * 0.4);
+      bodyMesh.add(bladeGlow);
+    } else {
+      // Default / Steam Drake / Beast: Articulated construct
+      const bodyGeo = new THREE.CylinderGeometry(radius * 0.55, radius * 0.75, radius * 1.5, 8);
+      bodyMesh = new THREE.Mesh(bodyGeo, mobMat);
+      bodyMesh.position.y = radius * 1.0;
+      group.add(bodyMesh);
+
+      const headGeo = new THREE.ConeGeometry(radius * 0.4, radius * 0.7, 6);
+      headGeo.rotateX(Math.PI / 2);
+      const head = new THREE.Mesh(headGeo, goldTrimMat);
+      head.position.set(0, radius * 0.7, radius * 0.6);
+      bodyMesh.add(head);
+
+      const eyeGeo = new THREE.BoxGeometry(radius * 0.3, 0.08, 0.08);
+      const eyes = new THREE.Mesh(eyeGeo, glowMat);
+      eyes.position.set(0, radius * 0.75, radius * 0.8);
+      bodyMesh.add(eyes);
+    }
 
     // Overhead Health Bar in 3D Space
     const hpBarGeo = new THREE.PlaneGeometry(1.8, 0.22);
@@ -226,6 +385,132 @@ export class MobManager {
     return entity;
   }
 
+  public spawnDungeonBoss(
+    bossId: string,
+    name: string,
+    level: number,
+    x: number,
+    z: number
+  ): WorldMobEntity {
+    const group = new THREE.Group();
+    group.position.set(x, 0, z);
+
+    const maxHp = 8000 + level * 500;
+    const radius = 3.5;
+    const damage = 65 + level * 5;
+    const expReward = 1200 + level * 100;
+    const goldReward = 500 + level * 50;
+    const colorHex = 0x9f1239; // Deep rose red
+
+    // Articulated Dungeon Boss Model
+    const bossMat = new THREE.MeshStandardMaterial({
+      color: colorHex,
+      metalness: 0.78,
+      roughness: 0.25,
+    });
+    const goldMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b,
+      metalness: 0.95,
+      roughness: 0.2,
+    });
+    const magmaMat = new THREE.MeshStandardMaterial({
+      color: 0xf97316,
+      emissive: 0xef4444,
+      emissiveIntensity: 2.2,
+    });
+
+    // Sculpted Multi-Segmented Torso
+    const bodyGeo = new THREE.CylinderGeometry(radius * 0.7, radius * 0.9, radius * 2.2, 8);
+    const bodyMesh = new THREE.Mesh(bodyGeo, bossMat);
+    bodyMesh.position.y = radius * 1.5;
+    group.add(bodyMesh);
+
+    // Glowing Runic Heart Chestplate
+    const runePlateGeo = new THREE.BoxGeometry(radius * 0.8, radius * 0.8, radius * 0.3);
+    const runePlate = new THREE.Mesh(runePlateGeo, goldMat);
+    runePlate.position.set(0, radius * 1.6, radius * 0.8);
+    group.add(runePlate);
+
+    const heartGeo = new THREE.OctahedronGeometry(radius * 0.35, 1);
+    const heart = new THREE.Mesh(heartGeo, magmaMat);
+    heart.position.set(0, radius * 1.6, radius * 0.95);
+    group.add(heart);
+
+    // Horned Helm & Crown
+    const helmGeo = new THREE.CylinderGeometry(radius * 0.45, radius * 0.4, radius * 0.9, 8);
+    const helm = new THREE.Mesh(helmGeo, bossMat);
+    helm.position.set(0, radius * 2.7, 0);
+    group.add(helm);
+
+    const leftHornGeo = new THREE.ConeGeometry(radius * 0.18, radius * 1.2, 6);
+    const leftHorn = new THREE.Mesh(leftHornGeo, magmaMat);
+    leftHorn.position.set(-radius * 0.5, radius * 3.3, 0);
+    leftHorn.rotation.z = Math.PI / 4;
+    group.add(leftHorn);
+
+    const rightHorn = new THREE.Mesh(leftHornGeo, magmaMat);
+    rightHorn.position.set(radius * 0.5, radius * 3.3, 0);
+    rightHorn.rotation.z = -Math.PI / 4;
+    group.add(rightHorn);
+
+    // Glowing Eyes
+    const eyeGeo = new THREE.BoxGeometry(radius * 0.5, 0.12, 0.15);
+    const eyes = new THREE.Mesh(eyeGeo, magmaMat);
+    eyes.position.set(0, radius * 2.7, radius * 0.45);
+    group.add(eyes);
+
+    // Overhead Health Bar in 3D Space
+    const hpBarGeo = new THREE.PlaneGeometry(3.5, 0.4);
+    const hpBarMat = new THREE.MeshBasicMaterial({
+      color: 0xef4444,
+      side: THREE.DoubleSide,
+    });
+    const healthBarMesh = new THREE.Mesh(hpBarGeo, hpBarMat);
+    healthBarMesh.position.set(0, radius * 3.6, 0);
+    group.add(healthBarMesh);
+
+    this.scene.add(group);
+
+    const entity: WorldMobEntity = {
+      id: bossId,
+      name,
+      type: 'titan_boss',
+      level,
+      hp: maxHp,
+      maxHp,
+      x,
+      y: 0,
+      z,
+      spawnX: x,
+      spawnZ: z,
+      radius,
+      attackRange: 6.0,
+      damage,
+      expReward,
+      goldReward,
+      isAggroed: false,
+      isBoss: true,
+      isElite: true,
+      patrolAngle: Math.random() * Math.PI * 2,
+      attackCooldown: 0,
+      maxAttackCooldown: 2.5,
+      dropTable: [],
+      color: `#${colorHex.toString(16).padStart(6, '0')}`,
+    };
+
+    const visual: MobVisual = {
+      entity,
+      group,
+      bodyMesh,
+      healthBarMesh,
+    };
+    visual.fsm = createMobStateMachine(visual as any);
+
+    threatMatrix.registerMob(bossId, x, z, 55.0);
+    this.mobs.push(visual);
+    return entity;
+  }
+
   public spawnWorldBoss(x: number = 0, z: number = 65): WorldMobEntity {
     const id = 'world_boss_titan_ignis';
     const group = new THREE.Group();
@@ -240,49 +525,78 @@ export class MobManager {
     const goldReward = 950;
     const colorHex = 0x9333ea;
 
-    // Colossal Boss Model
+    // Colossal Articulated Boss Model
     const bossMat = new THREE.MeshStandardMaterial({
-      color: 0x581c87,
-      emissive: 0x3b0764,
-      metalness: 0.9,
-      roughness: 0.2,
+      color: 0x3b0764,
+      emissive: 0x1e0538,
+      metalness: 0.92,
+      roughness: 0.22,
     });
 
     const fireMat = new THREE.MeshStandardMaterial({
       color: 0xf97316,
       emissive: 0xef4444,
-      emissiveIntensity: 2.0,
+      emissiveIntensity: 2.6,
     });
 
-    // Massive Torso
-    const torsoGeo = new THREE.BoxGeometry(4.5, 6.0, 3.5);
+    const goldMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b,
+      metalness: 0.95,
+      roughness: 0.18,
+    });
+
+    // Massive Articulated Torso
+    const torsoGeo = new THREE.CylinderGeometry(2.6, 2.0, 5.5, 8);
     const bodyMesh = new THREE.Mesh(torsoGeo, bossMat);
     bodyMesh.position.y = 5.5;
     group.add(bodyMesh);
 
-    // Glowing Molten Heart Core
-    const heartGeo = new THREE.IcosahedronGeometry(1.4, 1);
+    // Glowing Molten Heart Core with Sun Gear Rings
+    const heartGeo = new THREE.IcosahedronGeometry(1.3, 1);
     const heart = new THREE.Mesh(heartGeo, fireMat);
-    heart.position.set(0, 5.5, 1.8);
+    heart.position.set(0, 5.8, 1.8);
     group.add(heart);
 
-    // Giant Shoulders & Head
-    const headGeo = new THREE.BoxGeometry(2.2, 2.2, 2.2);
+    const gearRingGeo = new THREE.TorusGeometry(1.8, 0.12, 6, 24);
+    const gearRing = new THREE.Mesh(gearRingGeo, goldMat);
+    gearRing.position.set(0, 5.8, 1.7);
+    gearRing.rotation.x = Math.PI / 4;
+    group.add(gearRing);
+
+    // Colossal Helm & Horns
+    const headGeo = new THREE.CylinderGeometry(1.4, 1.2, 2.0, 8);
     const head = new THREE.Mesh(headGeo, bossMat);
-    head.position.set(0, 9.5, 0.4);
+    head.position.set(0, 9.2, 0.4);
     group.add(head);
 
-    // Horns
-    const hornGeo = new THREE.ConeGeometry(0.8, 3.2, 6);
+    const visorGeo = new THREE.BoxGeometry(1.6, 0.35, 0.6);
+    const visor = new THREE.Mesh(visorGeo, fireMat);
+    visor.position.set(0, 9.2, 1.4);
+    group.add(visor);
+
+    // Dual Majestic Horns
+    const hornGeo = new THREE.ConeGeometry(0.55, 3.2, 6);
     const leftHorn = new THREE.Mesh(hornGeo, fireMat);
-    leftHorn.position.set(-1.8, 11.5, 0);
+    leftHorn.position.set(-1.8, 11.2, 0.2);
     leftHorn.rotation.z = Math.PI / 4;
     group.add(leftHorn);
 
     const rightHorn = new THREE.Mesh(hornGeo, fireMat);
-    rightHorn.position.set(1.8, 11.5, 0);
+    rightHorn.position.set(1.8, 11.2, 0.2);
     rightHorn.rotation.z = -Math.PI / 4;
     group.add(rightHorn);
+
+    // Spiked Fortress Pauldrons
+    const pauldronGeo = new THREE.ConeGeometry(1.4, 2.6, 6);
+    const leftPauldron = new THREE.Mesh(pauldronGeo, goldMat);
+    leftPauldron.position.set(-3.2, 7.8, 0);
+    leftPauldron.rotation.z = Math.PI / 3;
+    group.add(leftPauldron);
+
+    const rightPauldron = new THREE.Mesh(pauldronGeo, goldMat);
+    rightPauldron.position.set(3.2, 7.8, 0);
+    rightPauldron.rotation.z = -Math.PI / 3;
+    group.add(rightPauldron);
 
     // Telegraph Ground AoE Ring
     const ringGeo = new THREE.RingGeometry(6.5, 7.5, 32);
@@ -419,7 +733,13 @@ export class MobManager {
     damage: number,
     attackerId: string = 'hero_player_1',
     isTankRole: boolean = false
-  ): { mob: WorldMobEntity | null; isKilled: boolean; lootDropped?: RPGItem } {
+  ): {
+    mob: WorldMobEntity | null;
+    isKilled: boolean;
+    lootDropped?: RPGItem;
+    isPityGuaranteed?: boolean;
+    pityCount?: number;
+  } {
     const visual = this.mobs.find((m) => m.entity.id === mobId);
     if (!visual) return { mob: null, isKilled: false };
 
@@ -451,15 +771,16 @@ export class MobManager {
       });
       threatMatrix.unregisterMob(mobId);
 
-      // Drop Loot from Mob Drop Table
-      let droppedItem: RPGItem | undefined;
-      if (mob.dropTable.length > 0) {
-        const randIndex = Math.floor(Math.random() * mob.dropTable.length);
-        droppedItem = mob.dropTable[randIndex];
-        this.lootManager.spawnLoot(droppedItem, mob.x, mob.z, mob.goldReward);
-      }
+      // Process mob death loot with pity system (guaranteed legendary after 50 failed epic attempts)
+      const lootResult = this.lootManager.processMobLoot(mob);
 
-      return { mob, isKilled: true, lootDropped: droppedItem };
+      return {
+        mob,
+        isKilled: true,
+        lootDropped: lootResult.droppedItem,
+        isPityGuaranteed: lootResult.isPityGuaranteed,
+        pityCount: lootResult.pityCount,
+      };
     }
 
     return { mob, isKilled: false };

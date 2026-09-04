@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { ItemRarity, LootDropEntity, RPGItem } from '../types';
+import { ItemRarity, LootDropEntity, RPGItem, WorldMobEntity } from '../types';
+import { RPG_ITEMS_DATABASE } from '../data/mmorpgData';
 
 interface LootVisual {
   entity: LootDropEntity;
@@ -13,9 +14,117 @@ export class LootDropManager {
   public scene: THREE.Scene;
   public lootDrops: LootVisual[] = [];
   private dropCounter: number = 0;
+  
+  // Pity counter per mob type (tracks failed 'epic' rarity drop attempts)
+  private pityCounters: Map<string, number> = new Map();
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
+  }
+
+  public getPityCount(mobType: string): number {
+    return this.pityCounters.get(mobType) || 0;
+  }
+
+  public setPityCount(mobType: string, count: number): void {
+    this.pityCounters.set(mobType, Math.max(0, count));
+  }
+
+  public resetPity(mobType: string): void {
+    this.pityCounters.set(mobType, 0);
+  }
+
+  public getAllPityCounters(): Record<string, number> {
+    const obj: Record<string, number> = {};
+    for (const [key, val] of this.pityCounters.entries()) {
+      obj[key] = val;
+    }
+    return obj;
+  }
+
+  /**
+   * Evaluates mob death drops, tracks failed epic rarity attempts,
+   * and triggers guaranteed legendary drop at 50 failed attempts for this mob type.
+   */
+  public processMobLoot(mob: WorldMobEntity): {
+    droppedItem?: RPGItem;
+    isPityGuaranteed: boolean;
+    pityCount: number;
+    goldAmount: number;
+  } {
+    const mobType = mob.type || 'standard_mob';
+    const currentPity = this.getPityCount(mobType);
+
+    // 1. Check if Pity Threshold (50 kills without epic/legendary) is reached
+    // Note: If currentPity is 49, this 50th kill guarantees the Legendary drop.
+    if (currentPity >= 49) {
+      this.resetPity(mobType);
+
+      // Find available legendary items from database
+      const legendaryPool = RPG_ITEMS_DATABASE.filter((i) => i.rarity === 'legendary');
+      let guaranteedItem: RPGItem;
+      if (legendaryPool.length > 0) {
+        guaranteedItem = { ...legendaryPool[Math.floor(Math.random() * legendaryPool.length)] };
+      } else {
+        guaranteedItem = {
+          id: `legendary_pity_${mobType}_${Date.now()}`,
+          name: `Legendäres Titanen-Relikt (${mob.name})`,
+          description: 'Ein urzeitliches Meisterwerk der Schicksalsschmiede, garantiert nach 50 Triumphen.',
+          icon: '👑',
+          rarity: 'legendary',
+          slot: 'relic',
+          levelReq: Math.max(1, mob.level),
+          stats: { attack: 60, armor: 45, maxHp: 250, critChance: 15 },
+          valueGold: 2500,
+        };
+      }
+
+      this.spawnLoot(guaranteedItem, mob.x, mob.z, mob.goldReward * 2);
+
+      return {
+        droppedItem: guaranteedItem,
+        isPityGuaranteed: true,
+        pityCount: 0,
+        goldAmount: mob.goldReward * 2,
+      };
+    }
+
+    // 2. Standard Drop Roll from Mob Drop Table
+    let rolledItem: RPGItem | undefined;
+    if (mob.dropTable && mob.dropTable.length > 0) {
+      // High chance on elites/bosses, moderate on standard mobs
+      const dropChance = mob.isBoss ? 1.0 : mob.isElite ? 0.9 : 0.75;
+      if (Math.random() <= dropChance) {
+        const randIndex = Math.floor(Math.random() * mob.dropTable.length);
+        rolledItem = { ...mob.dropTable[randIndex] };
+      }
+    }
+
+    // Check if the rolled drop is epic or higher
+    const isEpicOrHigher =
+      rolledItem &&
+      (rolledItem.rarity === 'epic' ||
+        rolledItem.rarity === 'legendary' ||
+        rolledItem.rarity === 'mystic');
+
+    if (isEpicOrHigher) {
+      // Successful epic drop -> reset pity for this mob type
+      this.resetPity(mobType);
+    } else {
+      // Failed epic attempt -> increment pity counter
+      this.setPityCount(mobType, currentPity + 1);
+    }
+
+    if (rolledItem) {
+      this.spawnLoot(rolledItem, mob.x, mob.z, mob.goldReward);
+    }
+
+    return {
+      droppedItem: rolledItem,
+      isPityGuaranteed: false,
+      pityCount: this.getPityCount(mobType),
+      goldAmount: mob.goldReward,
+    };
   }
 
   public spawnLoot(item: RPGItem, x: number, z: number, goldAmount: number = 0): LootDropEntity {
@@ -116,6 +225,28 @@ export class LootDropManager {
       this.scene.remove(loot.group);
       this.lootDrops.splice(index, 1);
     }
+  }
+
+  public collectNearbyCommonLoot(
+    playerX: number,
+    playerZ: number,
+    pickupRadius: number = 4.0
+  ): LootDropEntity[] {
+    const collected: LootDropEntity[] = [];
+    const remaining: LootVisual[] = [];
+
+    for (const loot of this.lootDrops) {
+      const dist = Math.hypot(loot.entity.x - playerX, loot.entity.z - playerZ);
+      if (dist <= pickupRadius && loot.entity.rarity === 'common') {
+        collected.push(loot.entity);
+        this.scene.remove(loot.group);
+      } else {
+        remaining.push(loot);
+      }
+    }
+
+    this.lootDrops = remaining;
+    return collected;
   }
 
   public getNearbyLoot(playerX: number, playerZ: number, pickupRadius: number = 3.5): LootDropEntity | null {
