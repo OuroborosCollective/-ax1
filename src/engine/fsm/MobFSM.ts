@@ -35,10 +35,14 @@ export interface MobFsmContext {
   visual: MobVisualReference;
   playerX: number;
   playerZ: number;
+  playerHp?: number;
   delta: number;
-  onMobAttack?: (mob: WorldMobEntity, dmg: number) => void;
+  onMobAttack?: (mob: WorldMobEntity, dmg: number, targetId?: string) => void;
   scene: THREE.Scene;
   onMobRespawnRequested?: (mob: WorldMobEntity) => void;
+  getTargetPosition?: (
+    entityId: string
+  ) => { x: number; y: number; z: number; isAlive: boolean; isPlayer?: boolean; name?: string } | null;
 }
 
 // === 1. IDLE STATE ===
@@ -130,6 +134,11 @@ export class MobCombatState implements IState<MobFsmContext> {
   enter(ctx: MobFsmContext): void {
     ctx.mob.fsmState = 'combat';
     ctx.mob.isAggroed = true;
+    if (ctx.mob.fightStartX === undefined) {
+      ctx.mob.fightStartX = ctx.mob.x;
+      ctx.mob.fightStartZ = ctx.mob.z;
+      threatMatrix.recordFightStart(ctx.mob.id, ctx.mob.x, ctx.mob.z);
+    }
   }
 
   update(ctx: MobFsmContext, delta: number): void {
@@ -139,28 +148,65 @@ export class MobCombatState implements IState<MobFsmContext> {
     // 1. Leash check: If mob ventured too far from spawn, trigger Evade
     const leashStatus = threatMatrix.checkLeashAndDecay(mob.id, mob.x, mob.z);
     
-    // Fallback: If threatMatrix has no target, maybe local player is the only choice.
-    // In a fully developed MMORPG we would look up the exact entity position, but 
-    // for this prototype, if it's the hero, we use ctx.playerX/playerZ.
-    const activeTargetId = leashStatus.targetId;
+    // Query authoritative target from Threat Table
+    let activeTargetId = leashStatus.targetId || threatMatrix.getTarget(mob.id);
     const distToLocalPlayer = Math.hypot(ctx.playerX - mob.x, ctx.playerZ - mob.z);
+    const playerIsAlive = (ctx.playerHp ?? 100) > 0;
 
-    if (leashStatus.isEvading || (!activeTargetId && distToLocalPlayer > (mob.isBoss ? 28.0 : mob.isElite ? 22.0 : 16.0))) {
+    // If no threat table target but player is close and alive, establish initial threat on player
+    if (!activeTargetId && playerIsAlive && distToLocalPlayer <= (mob.isBoss ? 28.0 : mob.isElite ? 22.0 : 16.0)) {
+      activeTargetId = 'hero_player_1';
+      threatMatrix.addDamageThreat(mob.id, 'hero_player_1', 1, false, 'Hero Player');
+    }
+
+    if (leashStatus.isEvading || !activeTargetId) {
       visual.fsm?.setState('evading', ctx);
       return;
     }
 
-    // 2. Low-health Panic Check: regular mobs with < 15% HP flee
+    // 2. Resolve Target Coordinates & Liveness
+    let targetX = ctx.playerX;
+    let targetZ = ctx.playerZ;
+    let targetIsAlive = playerIsAlive;
+    let targetName = 'Hero Player';
+
+    if (activeTargetId === 'hero_player_1') {
+      targetX = ctx.playerX;
+      targetZ = ctx.playerZ;
+      targetIsAlive = playerIsAlive;
+      targetName = 'Hero Player';
+    } else if (ctx.getTargetPosition) {
+      const targetInfo = ctx.getTargetPosition(activeTargetId);
+      if (targetInfo) {
+        targetX = targetInfo.x;
+        targetZ = targetInfo.z;
+        targetIsAlive = targetInfo.isAlive;
+        targetName = targetInfo.name || activeTargetId;
+      } else {
+        // Target vanished or disconnected
+        threatMatrix.removeTarget(mob.id, activeTargetId);
+        visual.fsm?.setState('evading', ctx);
+        return;
+      }
+    }
+
+    // If current target died, disengage immediately and return to fight start point
+    if (!targetIsAlive) {
+      threatMatrix.removeTarget(mob.id, activeTargetId);
+      visual.fsm?.setState('evading', ctx);
+      return;
+    }
+
+    mob.targetId = activeTargetId;
+    mob.targetName = targetName;
+
+    // 3. Low-health Panic Check: regular mobs with < 15% HP flee
     if (!mob.isBoss && !mob.isElite && mob.hp < mob.maxHp * 0.15 && mob.hp > 0) {
       visual.fsm?.setState('fleeing', ctx);
       return;
     }
 
-    // Determine target coords based on activeTargetId (mocked for now, assuming local player if not found)
-    const targetX = ctx.playerX;
-    const targetZ = ctx.playerZ;
-
-    // 3. Distance & Aggro drop-off
+    // 4. Distance & Aggro drop-off
     const distToTarget = Math.hypot(targetX - mob.x, targetZ - mob.z);
     const aggroThreshold = mob.isBoss ? 28.0 : mob.isElite ? 22.0 : 16.0;
     if (distToTarget > aggroThreshold * 1.9) {
@@ -168,7 +214,7 @@ export class MobCombatState implements IState<MobFsmContext> {
       return;
     }
 
-    // 4. A* Pathfinding towards Target
+    // 5. A* Pathfinding towards Target
     const now = performance.now();
     if (!visual.currentPath || !visual.lastPathCalcTime || now - visual.lastPathCalcTime > 320) {
       visual.currentPath = navGrid.findPath(mob.x, mob.z, targetX, targetZ, 32.0);
@@ -205,7 +251,7 @@ export class MobCombatState implements IState<MobFsmContext> {
       mob.attackCooldown -= delta;
       if (mob.attackCooldown <= 0) {
         mob.attackCooldown = mob.maxAttackCooldown;
-        ctx.onMobAttack?.(mob, mob.damage);
+        ctx.onMobAttack?.(mob, mob.damage, activeTargetId);
 
         // Visual strike lunge
         visual.bodyMesh.position.z = 0.8;
@@ -222,7 +268,7 @@ export class MobCombatState implements IState<MobFsmContext> {
       visual.telegraphRing.rotation.z += delta * 1.5;
 
       if (mob.castProgress > 0.95 && distToTarget <= 9.0) {
-        ctx.onMobAttack?.(mob, 160);
+        ctx.onMobAttack?.(mob, 160, activeTargetId);
       }
     }
   }
@@ -274,6 +320,7 @@ export class MobEvadingState implements IState<MobFsmContext> {
   enter(ctx: MobFsmContext): void {
     ctx.mob.fsmState = 'evading';
     ctx.mob.isAggroed = false;
+    ctx.mob.targetId = null;
   }
 
   update(ctx: MobFsmContext, delta: number): void {
@@ -281,22 +328,31 @@ export class MobEvadingState implements IState<MobFsmContext> {
     const visual = ctx.visual;
 
     // Rapid health regeneration while evading
-    mob.hp = Math.min(mob.maxHp, mob.hp + mob.maxHp * delta * 0.22);
+    mob.hp = Math.min(mob.maxHp, mob.hp + mob.maxHp * delta * 0.25);
 
-    const distToSpawn = Math.hypot(mob.spawnX - mob.x, mob.spawnZ - mob.z);
-    if (distToSpawn <= 1.2) {
-      // Reached spawn anchor -> return to idle
+    // Return to fight start point if set, otherwise original spawn point
+    const returnTargetX = mob.fightStartX ?? mob.spawnX;
+    const returnTargetZ = mob.fightStartZ ?? mob.spawnZ;
+
+    const distToAnchor = Math.hypot(returnTargetX - mob.x, returnTargetZ - mob.z);
+    if (distToAnchor <= 1.2) {
+      // Reached return anchor -> restore full health and return to idle
       mob.hp = mob.maxHp;
+      mob.x = returnTargetX;
+      mob.z = returnTargetZ;
+      mob.fightStartX = undefined;
+      mob.fightStartZ = undefined;
+      mob.targetId = null;
       visual.fsm?.setState('idle', ctx);
       return;
     }
 
-    const angleToSpawn = Math.atan2(mob.spawnX - mob.x, mob.spawnZ - mob.z);
-    visual.group.rotation.y = angleToSpawn;
+    const angleToTarget = Math.atan2(returnTargetX - mob.x, returnTargetZ - mob.z);
+    visual.group.rotation.y = angleToTarget;
 
     const evadeSpeed = 7.5 * delta;
-    const dispX = Math.sin(angleToSpawn) * evadeSpeed;
-    const dispZ = Math.cos(angleToSpawn) * evadeSpeed;
+    const dispX = Math.sin(angleToTarget) * evadeSpeed;
+    const dispZ = Math.cos(angleToTarget) * evadeSpeed;
 
     const resolved = collisionSystem.resolveMovement({ x: mob.x, z: mob.z }, { x: dispX, z: dispZ }, mob.radius);
     mob.x = resolved.newPos.x;

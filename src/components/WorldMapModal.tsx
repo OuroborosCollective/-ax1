@@ -20,6 +20,7 @@ import {
 import { NPCCharacter, PlayerStats, WorldChunkData, WorldExpansionStats, WorldBossRecord } from '../types';
 import { WorldChunkManager } from '../world/WorldChunkManager';
 import { INITIAL_WORLD_BOSSES } from '../data/bossLedgerData';
+import { MYSTIC_FLOWER_WELLS, ENEMY_SPAWN_POINTS } from '../data/mmorpgData';
 
 interface WorldMapModalProps {
   isOpen: boolean;
@@ -327,6 +328,41 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
               </div>
               <div className="absolute left-1/2 -translate-x-1/2 -top-7 px-2 py-0.5 bg-black/90 border border-gray-700 rounded text-[9px] font-serif text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                 {npc.name} ({npc.title})
+              </div>
+            </div>
+          ))}
+
+          {/* Mystic Flower Wells (Aetheric Recovery & Wellsprings) */}
+          {MYSTIC_FLOWER_WELLS.map((well) => (
+            <div
+              key={well.id}
+              className="absolute -translate-x-1/2 -translate-y-1/2 group cursor-pointer z-20"
+              style={{ left: `${toMapPct(well.x, false)}%`, top: `${toMapPct(well.z, true)}%` }}
+            >
+              <div
+                className="w-5 h-5 rounded-full border-2 bg-cyan-950/80 flex items-center justify-center text-[10px] shadow-[0_0_10px_rgba(0,240,255,0.4)]"
+                style={{ borderColor: well.color }}
+              >
+                🌸
+              </div>
+              <div className="absolute left-1/2 -translate-x-1/2 -top-7 px-2 py-0.5 bg-black/90 border border-cyan-500/80 rounded text-[9px] font-serif text-cyan-200 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 shadow-lg">
+                {well.name} ({well.bloomState.toUpperCase()})
+              </div>
+            </div>
+          ))}
+
+          {/* Enemy Spawn Points */}
+          {ENEMY_SPAWN_POINTS.map((sp) => (
+            <div
+              key={sp.id}
+              className="absolute -translate-x-1/2 -translate-y-1/2 group cursor-pointer z-15"
+              style={{ left: `${toMapPct(sp.x, false)}%`, top: `${toMapPct(sp.z, true)}%` }}
+            >
+              <div className="w-4 h-4 rounded-full border border-red-500/70 bg-red-950/60 flex items-center justify-center text-[8px] text-red-300 shadow-[0_0_6px_rgba(239,68,68,0.4)]">
+                ⚠️
+              </div>
+              <div className="absolute left-1/2 -translate-x-1/2 -top-6 px-1.5 py-0.5 bg-black/90 border border-red-500/70 rounded text-[8px] font-mono text-red-300 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 shadow-lg">
+                {sp.mobName} (Lv.{sp.recommendedLevel})
               </div>
             </div>
           ))}

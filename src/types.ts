@@ -4,7 +4,9 @@
 
 export type CharacterClassId = 'knight' | 'mage' | 'ranger' | 'engineer';
 
-export type WeaponType = 'blade' | 'arcane' | 'marksmanship' | 'heavy_tech';
+export type WeaponType = 'blade' | 'arcane' | 'marksmanship' | 'heavy_tech' | 'scythe' | 'battleaxe' | 'warhammer' | 'daggers' | 'bow' | 'staff' | 'wand' | 'knuckles' | 'spear' | 'greatsword';
+export type ArmorType = 'shoulder' | 'bracers' | 'gloves' | 'chest' | 'shoes' | 'legs' | 'helmet' | 'cape';
+export type ItemMaterial = 'steel' | 'iron' | 'bronze' | 'leather' | 'cloth';
 
 export type ItemRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'mystic';
 
@@ -21,6 +23,7 @@ export type ItemSlot =
   | 'legs'
   | 'boots'
   | 'shoes'
+  | 'cape'
   | 'relic'
   | 'ring'
   | 'amulet'
@@ -153,6 +156,26 @@ export interface CharacterAttributes {
   defense: number;      // Armor rating & max HP
 }
 
+export interface AttributeBreakpoint {
+  attribute: keyof CharacterAttributes;
+  threshold: number; // 25, 50, 75, 100
+  name: string;
+  icon: string;
+  description: string;
+}
+
+export interface WeaponMasteryPerk {
+  id: string;
+  weaponType: WeaponType;
+  name: string;
+  tier: number; // 1..6
+  requiredMasteryLevel: number;
+  icon: string;
+  description: string;
+  effectType: 'damage_mult' | 'crit_damage' | 'cooldown_reduc' | 'lifesteal' | 'armor_penetration' | 'resource_cost' | 'cleave_radius' | 'elemental_potency';
+  value: number; // e.g. 0.15 for 15%
+}
+
 export interface MilestoneWeaponSkill extends ClassSkill {
   requiredMasteryLevel: number;
   unlockCostGold: number;
@@ -170,6 +193,8 @@ export interface WeaponMastery {
   color: string;
   description: string;
   scalingAttr: string;
+  perkPoints?: number;
+  allocatedPerks?: string[];
   bonusStats: {
     attack?: number;
     spellPower?: number;
@@ -182,6 +207,78 @@ export interface WeaponMastery {
   };
   skills: ClassSkill[];
   milestoneSkills?: MilestoneWeaponSkill[];
+  availablePerks?: WeaponMasteryPerk[];
+}
+
+export type ElementalSynergyType = 'shatter' | 'firestorm' | 'chain_discharge' | 'overcharge' | 'void_collapse';
+
+export interface ElementalSynergyEvent {
+  type: ElementalSynergyType;
+  name: string;
+  color: string;
+  damage: number;
+  x: number;
+  y: number;
+  z: number;
+  targetCount: number;
+}
+
+export interface BossTelegraph {
+  id: string;
+  sourceMobId: string;
+  type: 'circle' | 'cone' | 'rectangle';
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  angle?: number;
+  arcAngle?: number;
+  length?: number;
+  width?: number;
+  castTime: number;
+  totalCastTime: number;
+  damage: number;
+  skillName: string;
+  color: string;
+}
+
+export interface CombatLogEntry {
+  id: string;
+  timestamp: string;
+  type: 'damage_dealt' | 'damage_taken' | 'heal' | 'synergy' | 'dodge' | 'telegraph_avoid';
+  text: string;
+  color: string;
+  value?: number;
+  isCrit?: boolean;
+}
+
+export interface DPSMeterStats {
+  currentDps: number;
+  peakDps: number;
+  currentDtps: number;
+  totalDamageDone: number;
+  totalDamageTaken: number;
+  combatDurationSec: number;
+  inCombat: boolean;
+  critRate: number;
+  synergyTriggers: number;
+  recentLogs: CombatLogEntry[];
+}
+
+export interface ArmorMastery {
+  type: ArmorType;
+  name: string;
+  level: number;
+  xp: number;
+  maxXp: number;
+  icon: string;
+  color: string;
+  description: string;
+  bonusStats: {
+    armor: number;
+    health: number;
+    dodgeChance: number;
+  };
 }
 
 export interface RPGItem {
@@ -192,6 +289,8 @@ export interface RPGItem {
   rarity: ItemRarity;
   slot: ItemSlot;
   weaponType?: WeaponType;
+  armorType?: ArmorType;
+  material?: ItemMaterial;
   levelReq: number;
   classReq?: CharacterClassId;
   quantity?: number;
@@ -279,12 +378,14 @@ export interface PlayerStats {
   x: number;
   y: number;
   z: number;
+  facingAngle?: number;
   // RuneScape-style Attribute Stat Point Allocation
   statPoints: number;
   attributes: CharacterAttributes;
-  // Open Classless Weapon Mastery Progression
+  // Open Classless Weapon & Armor Mastery Progression
   activeWeaponType: WeaponType;
   weaponMasteries: Record<WeaponType, WeaponMastery>;
+  armorMasteries: Record<ArmorType, ArmorMastery>;
   equippedSkills: ClassSkill[];
   unlockedMilestoneSkills: string[];
   totalMasteryLevel: number;
@@ -314,6 +415,40 @@ export interface AscensionTalent {
   statBonusPerRank: string;
 }
 
+export interface MysticFlowerWell {
+  id: string;
+  name: string;
+  germanName: string;
+  zone: string;
+  kingdom: string;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  bloomState: 'radiant' | 'aether_surge' | 'blooming' | 'dormant';
+  buffEffect: string;
+  color: string;
+  icon: string;
+  description: string;
+}
+
+export interface EnemySpawnPoint {
+  id: string;
+  name: string;
+  germanName: string;
+  zone: string;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  mobType: string;
+  mobName: string;
+  dangerLevel: 'low' | 'moderate' | 'high' | 'skull';
+  recommendedLevel: number;
+  icon: string;
+  respawnRateSeconds: number;
+}
+
 export interface EquipmentState {
   weapon: RPGItem | null;
   shield: RPGItem | null;
@@ -327,6 +462,7 @@ export interface EquipmentState {
   legs: RPGItem | null;
   boots: RPGItem | null;
   shoes?: RPGItem | null;
+  cape: RPGItem | null;
   relic: RPGItem | null;
   ring?: RPGItem | null;
   amulet?: RPGItem | null;
@@ -374,6 +510,11 @@ export interface WorldMobEntity {
   castSkillName?: string;
   fsmState?: EntityFsmState;
   aggroTable?: Record<string, number>; // Maps entity ID (player/party) to aggro amount
+  targetId?: string | null;
+  targetName?: string;
+  fightStartX?: number; // Starting coordinate where fight engaged
+  fightStartZ?: number;
+  topThreat?: number;
 }
 
 export interface SimulatedPlayer {
@@ -588,12 +729,47 @@ export interface FloatingCombatText {
   text: string;
   x: number;
   y: number;
+  z?: number;
+  screenX?: number; // 0-100 percentage
+  screenY?: number; // 0-100 percentage
   color: string;
   size: 'sm' | 'md' | 'lg' | 'xl';
   opacity: number;
   lifespan: number;
   vy: number;
   isCrit?: boolean;
+  type?: 'damage' | 'crit' | 'heal' | 'combo' | 'player_damage' | 'system' | 'exp' | 'mastery';
+  icon?: string;
+}
+
+export type ComboRank = 'NORMAL' | 'AETHER' | 'TEMPEST' | 'TITAN' | 'AURION';
+
+export interface ComboState {
+  count: number;
+  maxCombo: number;
+  timer: number;
+  maxTimer: number;
+  totalDamage: number;
+  multiplier: number;
+  rank: ComboRank;
+  rankName: string;
+  rankColor: string;
+  activeWeaponType: WeaponType;
+  lastHitTime: number;
+  recentHits: number;
+}
+
+export interface DirectionalDamageIndicator {
+  id: string;
+  angleRad: number; // relative to camera view / player orientation (-PI to PI; 0 = top/front, PI/2 = right, PI/-PI = bottom/back, -PI/2 = left)
+  damage: number;
+  lifespan: number;
+  maxLifespan: number;
+  opacity: number;
+  isCrit?: boolean;
+  sourceType?: 'mob' | 'hazard' | 'projectile' | 'boss';
+  sourceName?: string;
+  color?: string;
 }
 
 export interface ArchiveFile {
@@ -666,6 +842,7 @@ export interface WorldChunkData {
   elevationBase: number;
   materialTheme: 'grass' | 'flower_meadow' | 'earth' | 'farmland' | 'garden_parcels' | 'starpath' | 'starpath_crossing';
   obstacles: SolidObstacle[];
+  resourceDensity?: Record<string, number>;
   featureDescription: string;
   createdAt: string;
 }
@@ -732,3 +909,19 @@ export interface EnginePerformanceMetrics {
 export * from './types/guild';
 
 
+
+export interface ResourceNode {
+  id: string;
+  name: string;
+  type: string;
+  x: number;
+  y: number;
+  z: number;
+  resourceItemId: string;
+  requiredProfession: GatheringProfessionId;
+  requiredToolCategory: string; // e.g. 'Pickaxe'
+  amount: number;
+  respawnTimeSeconds: number;
+  isDepleted: boolean;
+  color: string;
+}

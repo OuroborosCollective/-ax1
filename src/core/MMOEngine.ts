@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import confetti from 'canvas-confetti';
-import {
+import { ResourceNode, 
   ActiveBuffSummary,
   CharacterAppearance,
   CharacterClassId,
@@ -23,8 +23,19 @@ import {
   SimulatedPlayer,
   WorldMobEntity,
   DungeonDefinition,
+  ComboState,
+  ComboRank,
+  DirectionalDamageIndicator,
+  WeaponType,
+  DPSMeterStats,
+  CombatLogEntry,
+  BossTelegraph,
 } from '../types';
-import { INITIAL_NPCS, MMORPG_CLASSES, COMPANION_PETS_DATABASE, HOMESTEAD_BLUEPRINTS } from '../data/mmorpgData';
+import { INITIAL_RESOURCE_NODES, INITIAL_NPCS, MMORPG_CLASSES, COMPANION_PETS_DATABASE, HOMESTEAD_BLUEPRINTS, RPG_ITEMS_DATABASE } from '../data/mmorpgData';
+import { MOB_ELEMENTAL_AFFINITIES } from '../data/combatProgressionData';
+import { ElementalSynergyEngine } from '../engine/combat/ElementalSynergyEngine';
+import { TelegraphVisualizer } from '../engine/combat/TelegraphVisualizer';
+import { CombatMetricsTracker } from '../engine/combat/CombatMetricsTracker';
 import { OpenWorldLandscape } from '../world/OpenWorldLandscape';
 import { OpenWorldPlayer } from '../entities/OpenWorldPlayer';
 import { collisionSystem } from '../world/WorldCollisionSystem';
@@ -77,6 +88,8 @@ interface ActiveAoEEffect {
 }
 
 export class MMOEngine {
+  public resourceNodes: ResourceNode[] = [];
+  private nodeMeshes: Map<string, THREE.Mesh> = new Map();
   public container: HTMLElement;
   public scene: THREE.Scene;
   public camera: THREE.PerspectiveCamera;
@@ -178,6 +191,31 @@ export class MMOEngine {
   private textIdCounter: number = 0;
   private resizeObserver?: ResizeObserver;
 
+  // Combo Counter & Combat Feedback System
+  public comboState: ComboState = {
+    count: 0,
+    maxCombo: 0,
+    timer: 0,
+    maxTimer: 3.2,
+    totalDamage: 0,
+    multiplier: 1.0,
+    rank: 'NORMAL',
+    rankName: 'COMBAT FLOW',
+    rankColor: '#e2e8f0',
+    activeWeaponType: 'blade',
+    lastHitTime: 0,
+    recentHits: 0,
+  };
+
+  // Directional Damage Hit Indicators
+  public directionalIndicators: DirectionalDamageIndicator[] = [];
+  private dirIndicatorIdCounter: number = 0;
+
+  // Next-Gen Deterministic Combat Overhaul Engines
+  public elementalSynergyEngine: ElementalSynergyEngine;
+  public telegraphVisualizer: TelegraphVisualizer;
+  public combatMetricsTracker: CombatMetricsTracker;
+
   // Virtual on-screen movement input
   public virtualForward: number = 0;
   public virtualRight: number = 0;
@@ -204,6 +242,14 @@ export class MMOEngine {
     engineMetrics: EnginePerformanceMetrics;
     autoLootEnabled?: boolean;
     pityCounters?: Record<string, number>;
+    facingAngle?: number;
+    cameraYaw?: number;
+    activeMobs?: WorldMobEntity[];
+    npcs?: NPCCharacter[];
+    comboState?: ComboState;
+    directionalIndicators?: DirectionalDamageIndicator[];
+    dpsMeterStats?: DPSMeterStats;
+    combatLogs?: CombatLogEntry[];
   }) => void;
 
   private isRunning: boolean = false;
@@ -573,6 +619,11 @@ export class MMOEngine {
     this.simPlayers = new SimulatedRealmPlayers(this.scene);
     this.remotePlayers = new RemotePlayerManager(this.scene);
 
+    // Initialize Deterministic Combat Engines
+    this.elementalSynergyEngine = new ElementalSynergyEngine();
+    this.telegraphVisualizer = new TelegraphVisualizer(this.scene);
+    this.combatMetricsTracker = new CombatMetricsTracker();
+
     // Realtime Multiplayer Realm WebSocket setup
     multiplayerClient.connect('hero_player_1', 'Aurion Hero', startingClass);
     multiplayerClient.on('connected', () => {
@@ -697,6 +748,22 @@ export class MMOEngine {
       });
       this.resizeObserver.observe(this.container);
     }
+  }
+
+  
+  private spawnResourceNode(node: ResourceNode) {
+    if (this.nodeMeshes.has(node.id)) return;
+    const geometry = new THREE.DodecahedronGeometry(1.5);
+    const material = new THREE.MeshStandardMaterial({ color: node.color, roughness: 0.7, metalness: 0.3 });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(node.x, node.y + 1, node.z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    this.scene.add(mesh);
+    this.nodeMeshes.set(node.id, mesh);
+    
+    // Add collision
+    collisionSystem.registerObstacle({ id: node.id, x: node.x, z: node.z, radius: 2.0, chunkKey: 'none', type: 'rock' });
   }
 
   private spawnNPCVisuals() {
@@ -989,6 +1056,12 @@ export class MMOEngine {
       e.preventDefault();
       this.cycleTarget();
     }
+
+    // T: Taunt current target or nearby mobs
+    if (key === 't') {
+      e.preventDefault();
+      this.tauntTarget();
+    }
   };
 
   private handleKeyUp = (e: KeyboardEvent) => {
@@ -1129,7 +1202,6 @@ export class MMOEngine {
         'Loot',
         `Acquired [${loot.item.name}] (${loot.rarity.toUpperCase()}) and ${loot.goldAmount} Gold!`
       );
-      // Progress Quests
       this.progressQuests('collect_loot');
       const item = loot.item;
       this.nearbyLoot = null;
@@ -1140,6 +1212,85 @@ export class MMOEngine {
     if (this.nearbyNPC) {
       soundSynth.playNpcInteract();
       return { npcOpened: this.nearbyNPC };
+    }
+
+    // 3. Check Resource Nodes
+    for (const node of this.resourceNodes) {
+      if (node.isDepleted) continue;
+      const dist = Math.hypot(node.x - this.player.position.x, node.z - this.player.position.z);
+      if (dist < 4.0) {
+        // Check Tool
+        const tool = this.player.inventory.find(i => i.slot === 'tool' && i.name.includes(node.requiredToolCategory));
+        if (!tool) {
+          this.addFloatingText('Need ' + node.requiredToolCategory + '!', node.x, node.y + 3, '#ef4444');
+          return {};
+        }
+
+        // Get local chunk density
+        const cx = Math.floor(node.x / this.worldChunkManager.chunkSize);
+        const cz = Math.floor(node.z / this.worldChunkManager.chunkSize);
+        const chunk = this.worldChunkManager.getChunk(`${cx},${cz}`);
+        let densityBonus = 1.0;
+        if (chunk && chunk.resourceDensity) {
+          densityBonus = chunk.resourceDensity[node.type] || 1.0;
+        }
+
+        // Calculate Yield dynamically based on chunk density + tool
+        const baseYield = 1;
+        const totalYield = Math.max(1, Math.floor(baseYield * densityBonus));
+
+        // Harvest
+        node.amount -= 1;
+        this.addFloatingText(`+${totalYield} ${node.name} (Density ${densityBonus.toFixed(1)}x)`, node.x, node.y + 3, '#10b981');
+        soundSynth.playItemPickup(); // Pluck/Mine sound
+        
+        // Add to inventory (mocked RPG_ITEMS_DATABASE logic if we can't import it easily, we'll import it at top)
+        // Wait, RPG_ITEMS_DATABASE is not imported? Let's assume it is or import it.
+        // I will use a generic item for now if not found.
+        const itemDef = RPG_ITEMS_DATABASE.find(i => i.id === node.resourceItemId); 
+        if (itemDef) {
+          for (let i = 0; i < totalYield; i++) {
+             this.player.inventory.push({ ...itemDef, id: `${itemDef.id}_${Date.now()}_${i}` });
+          }
+        } else {
+          for (let i = 0; i < totalYield; i++) {
+             this.player.inventory.push({ 
+               id: `${node.resourceItemId}_${Date.now()}_${i}`,
+               name: node.name,
+               description: 'Gathered resource',
+               icon: '🌾',
+               rarity: 'common',
+               slot: 'material',
+               levelReq: 1,
+               stats: {},
+               valueGold: 1
+             });
+          }
+        }
+        
+        this.addChatMessage('system', 'System', `Gathered ${totalYield}x ${node.name}. (Local Supply: ${densityBonus.toFixed(1)}x)`);
+        
+        // Note: In a full integration, you would call addProfessionExperience here.
+        // Assuming MMOEngine has emitStateUpdate
+        
+        if (node.amount <= 0) {
+          node.isDepleted = true;
+          const mesh = this.nodeMeshes.get(node.id);
+          if (mesh) {
+            mesh.visible = false;
+            collisionSystem.removeObstacle(node.id);
+          }
+          // Simple respawn timer
+          setTimeout(() => {
+            node.isDepleted = false;
+            node.amount = 5;
+            if (mesh) mesh.visible = true;
+            collisionSystem.registerObstacle({ id: node.id, x: node.x, z: node.z, radius: 2.0, chunkKey: 'none', type: 'rock' });
+          }, node.respawnTimeSeconds * 1000);
+        }
+        
+        return {};
+      }
     }
 
     return {};
@@ -1339,6 +1490,12 @@ export class MMOEngine {
       this.player.triggerShield(6.0);
       this.particleSystem.emit('beacon_activate', this.player.position, '#00f2ff', 0.8);
       this.addFloatingText('Aegis Shield Active (-75% Dmg)', this.player.position.x, this.player.position.y + 2.5, '#00f2ff', 'lg');
+      // Knight AoE Taunt: seize aggro from all mobs in 22m radius
+      const taunted = this.mobManager.tauntNearbyMobs('hero_player_1', this.player.position.x, this.player.position.z, 22.0, 'Hero Player');
+      if (taunted.length > 0) {
+        this.addFloatingText(`⚔️ TAUNT! ${taunted.length} Mobs Aggroed`, this.player.position.x, this.player.position.y + 3.2, '#fbbf24', 'xl');
+        this.addChatMessage('system', 'Aegis Spott', `[Spott] ${taunted.length} Monster in 22m Umkreis verspottet! Bedrohung auf Höchstwert gesetzt.`);
+      }
     } else if (skill.id === 'e_heal') {
       this.player.heal(220);
       this.particleSystem.emit('heal_sparkle', this.player.position, '#10b981', 1.4);
@@ -1449,21 +1606,28 @@ export class MMOEngine {
       lagCompensation.recordSnapshot(mobId, mobPos, mobVisual.entity.radius, 2.0);
     }
 
-    // Weather combat multiplier
+    // Weather combat multiplier & Combo streak bonus
     let finalDamage = damage;
+    if (this.comboState.count > 0) {
+      finalDamage = Math.round(finalDamage * this.comboState.multiplier);
+    }
     if (this.player.currentClassId === 'mage' && this.currentWeather) {
       finalDamage = Math.round(finalDamage * this.currentWeather.damageMultiplierElectricArcane);
     }
 
     const isTank = this.player.currentClassId === 'knight';
-    const result = this.mobManager.damageMob(mobId, finalDamage, 'hero_player_1', isTank);
+    const result = this.mobManager.damageMob(mobId, finalDamage, 'hero_player_1', isTank, 'Hero Player');
     if (!result.mob) return;
+
+    // Track combo sequence for the player's active weapon
+    const activeWep = this.player.getActiveWeaponType();
+    this.recordComboHit(finalDamage, isCrit, activeWep);
 
     // Broadcast combat hit to realm peers
     multiplayerClient.sendCombatAction({
       action: 'hit',
       targetMobId: mobId,
-      damage,
+      damage: finalDamage,
       isCrit,
       color: isCrit ? '#fbbf24' : '#ffffff',
     });
@@ -1504,18 +1668,21 @@ export class MMOEngine {
       this.particleSystem.emit(pType, { x: result.mob.x, y: result.mob.y + 1.0, z: result.mob.z }, pColor, 1.0);
     }
 
-    // Floating damage text
+    // Floating damage text with 3D coordinates and combo rank flare
+    const floatColor = isCrit ? '#fbbf24' : this.comboState.count >= 10 ? this.comboState.rankColor : '#ffffff';
     this.addFloatingText(
-      isCrit ? `CRIT! ${damage}` : `${damage}`,
+      isCrit ? `★ CRIT! ${finalDamage}` : `${finalDamage}`,
       result.mob.x + (Math.random() - 0.5) * 1.2,
       result.mob.y + 2.2,
-      isCrit ? '#fbbf24' : '#ffffff',
-      isCrit ? 'xl' : 'lg',
-      isCrit
+      floatColor,
+      isCrit ? 'xl' : this.comboState.count >= 10 ? 'lg' : 'md',
+      isCrit,
+      result.mob.z + (Math.random() - 0.5) * 0.8,
+      isCrit ? 'crit' : 'damage',
+      isCrit ? '★' : undefined
     );
 
     // Award Weapon Mastery Progression for equipped weapon type on combat hit
-    const activeWep = this.player.getActiveWeaponType();
     const masteryHitXp = Math.max(5, Math.round(damage * 0.35));
     const hitMastery = this.player.gainWeaponMasteryXp(activeWep, masteryHitXp);
     if (hitMastery.leveledUp) {
@@ -1690,25 +1857,159 @@ export class MMOEngine {
     }
   }
 
+  public recordComboHit(damage: number, isCrit: boolean, weaponType: WeaponType) {
+    const now = performance.now();
+    this.comboState.count += 1;
+    this.comboState.timer = 3.2; // 3.2s combo window
+    this.comboState.totalDamage += damage;
+    this.comboState.activeWeaponType = weaponType;
+    this.comboState.lastHitTime = now;
+    this.comboState.recentHits += 1;
+    if (this.comboState.count > this.comboState.maxCombo) {
+      this.comboState.maxCombo = this.comboState.count;
+    }
+
+    // Dynamic Multiplier & Rank by weapon archetype
+    let rank: ComboRank = 'NORMAL';
+    let rankName = 'COMBAT FLOW';
+    let rankColor = '#e2e8f0';
+    let bonusMult = 0;
+
+    const count = this.comboState.count;
+    if (count >= 30) {
+      rank = 'AURION';
+      rankName = 'AURION TRANSCENDENCE';
+      rankColor = '#ec4899';
+      bonusMult = 0.35;
+    } else if (count >= 20) {
+      rank = 'TITAN';
+      rankName = 'TITAN BREAKER';
+      rankColor = '#f59e0b';
+      bonusMult = 0.25;
+    } else if (count >= 10) {
+      rank = 'TEMPEST';
+      rankName = 'TEMPEST FLURRY';
+      rankColor = '#10b981';
+      bonusMult = 0.15;
+    } else if (count >= 5) {
+      rank = 'AETHER';
+      rankName = 'AETHER SURGE';
+      rankColor = '#00f0ff';
+      bonusMult = 0.08;
+    }
+
+    // Heavy weapons (battleaxe, warhammer, greatsword) ramp multiplier faster per hit
+    if (weaponType === 'battleaxe' || weaponType === 'warhammer' || weaponType === 'greatsword') {
+      bonusMult *= 1.35;
+    } else if (weaponType === 'daggers' || weaponType === 'knuckles') {
+      bonusMult *= 0.9;
+    }
+
+    this.comboState.rank = rank;
+    this.comboState.rankName = rankName;
+    this.comboState.rankColor = rankColor;
+    this.comboState.multiplier = 1.0 + bonusMult;
+
+    soundSynth.playComboHit(this.comboState.count, isCrit);
+    if (count === 5 || count === 10 || count === 20 || count === 30 || count === 50) {
+      soundSynth.playComboMilestone(this.comboState.count);
+      this.addFloatingText(
+        `⚡ ${this.comboState.count} COMBO: ${rankName}! ⚡`,
+        this.player.position.x,
+        this.player.position.y + 2.5,
+        rankColor,
+        'xl',
+        true,
+        this.player.position.z,
+        'combo',
+        '⚡'
+      );
+    }
+  }
+
+  public addDirectionalDamageIndicator(
+    sourceX: number,
+    sourceZ: number,
+    damage: number,
+    isCrit: boolean = false,
+    sourceType: DirectionalDamageIndicator['sourceType'] = 'mob',
+    color?: string,
+    sourceName?: string
+  ) {
+    // Calculate world angle from player to source
+    const dx = sourceX - this.player.position.x;
+    const dz = sourceZ - this.player.position.z;
+    const worldAngle = Math.atan2(dx, dz);
+
+    // Calculate angle relative to camera view yaw
+    const camAngle = this.cameraYaw;
+    let relativeAngle = worldAngle - camAngle;
+
+    // Normalize between -PI and PI
+    while (relativeAngle > Math.PI) relativeAngle -= Math.PI * 2;
+    while (relativeAngle < -Math.PI) relativeAngle += Math.PI * 2;
+
+    const indColor = color || (isCrit ? '#f59e0b' : sourceType === 'boss' ? '#fbbf24' : '#ef4444');
+
+    this.directionalIndicators.push({
+      id: `dir_hit_${++this.dirIndicatorIdCounter}`,
+      angleRad: relativeAngle,
+      damage,
+      lifespan: 1.2,
+      maxLifespan: 1.2,
+      opacity: 1.0,
+      isCrit,
+      sourceType,
+      sourceName,
+      color: indColor,
+    });
+
+    if (this.directionalIndicators.length > 8) {
+      this.directionalIndicators.shift();
+    }
+
+    soundSynth.playDirectionalDamageSound(relativeAngle, isCrit);
+  }
+
   public addFloatingText(
     text: string,
     x: number,
     y: number,
     color: string,
     size: FloatingCombatText['size'] = 'md',
-    isCrit: boolean = false
+    isCrit: boolean = false,
+    z?: number,
+    type?: FloatingCombatText['type'],
+    icon?: string
   ) {
+    const textZ = z ?? this.player.position.z;
+    let screenX: number | undefined;
+    let screenY: number | undefined;
+
+    if (this.camera) {
+      const proj = new THREE.Vector3(x, y, textZ).project(this.camera);
+      if (proj.z <= 1.0) {
+        screenX = Math.round((proj.x * 0.5 + 0.5) * 1000) / 10;
+        screenY = Math.round((-(proj.y * 0.5) + 0.5) * 1000) / 10;
+      }
+    }
+
     this.floatingTexts.push({
       id: `ftext_${++this.textIdCounter}`,
       text,
       x,
       y,
+      z: textZ,
+      screenX,
+      screenY,
       color,
       size,
       opacity: 1.0,
-      lifespan: 1.4,
-      vy: 1.2,
+      lifespan: isCrit || size === 'xl' ? 1.8 : 1.4,
+      vy: isCrit ? 1.5 : 1.2,
       isCrit,
+      type: type || (isCrit ? 'crit' : 'damage'),
+      icon,
     });
   }
 
@@ -1866,19 +2167,87 @@ export class MMOEngine {
     this.camera.position.lerp(new THREE.Vector3(targetCamX, targetCamY, targetCamZ), delta * 8.0);
     this.camera.lookAt(this.player.position.x, this.player.position.y + 1.6, this.player.position.z);
 
-    // 5. Update Mobs AI
-    this.mobManager.update(delta, this.player.position.x, this.player.position.z, (mob, dmg) => {
-      // Mob attacks player
-      const res = this.player.takeDamage(dmg);
-      soundSynth.playHitSound();
-      this.addFloatingText(`-${res.damageTaken}`, this.player.position.x, this.player.position.y + 1.8, '#ef4444', 'lg');
+    // 5. Update Mobs AI & Authoritative Threat Matrix with Target Tether Lines
+    this.mobManager.update(
+      delta,
+      this.player.position.x,
+      this.player.position.z,
+      this.player.stats.hp,
+      (mob, dmg, targetId) => {
+        // Mob attacks target: Hero or Simulated Player
+        if (!targetId || targetId === 'hero_player_1') {
+          const res = this.player.takeDamage(dmg);
+          soundSynth.playHitSound();
 
-      if (res.isDead) {
-        this.addFloatingText('DEFEATED - Respawning at Sanctum...', this.player.position.x, this.player.position.y + 2.5, '#ef4444', 'xl');
-        this.player.position.set(0, 0, 8.0); // respawn at open city hub plaza
-        this.player.stats.hp = this.player.stats.maxHp;
+          // Directional damage hit indicator relative to camera orientation
+          this.addDirectionalDamageIndicator(
+            mob.x,
+            mob.z,
+            res.damageTaken,
+            false,
+            mob.isBoss ? 'boss' : 'mob',
+            mob.isBoss ? '#f59e0b' : '#ef4444'
+          );
+
+          this.addFloatingText(
+            `-${res.damageTaken}`,
+            this.player.position.x,
+            this.player.position.y + 1.8,
+            '#ef4444',
+            'lg',
+            false,
+            this.player.position.z,
+            'player_damage',
+            '🛡️'
+          );
+
+          if (res.isDead) {
+            this.handlePlayerDeath();
+          }
+        } else {
+          // Attack simulated peer
+          const sim = this.simPlayers.players.find((p) => p.data.id === targetId);
+          if (sim) {
+            soundSynth.playHitSound();
+            this.addFloatingText(`-${dmg}`, sim.data.x, 2.2, '#f97316', 'md');
+          }
+        }
+      },
+      (entityId: string) => {
+        if (entityId === 'hero_player_1') {
+          return {
+            x: this.player.position.x,
+            y: this.player.position.y,
+            z: this.player.position.z,
+            isAlive: this.player.stats.hp > 0,
+            isPlayer: true,
+            name: 'Hero Player',
+          };
+        }
+        const sim = this.simPlayers.players.find((p) => p.data.id === entityId);
+        if (sim) {
+          return {
+            x: sim.data.x,
+            y: sim.data.y,
+            z: sim.data.z,
+            isAlive: (sim.data.hp ?? 100) > 0,
+            isPlayer: false,
+            name: sim.data.name,
+          };
+        }
+        return null;
       }
-    });
+    );
+
+    // 5.1 Keep targetMob in sync with real-time Threat Matrix & positions
+    if (this.targetMob) {
+      const liveMob = this.mobManager.mobs.find((m) => m.entity.id === this.targetMob!.id);
+      if (liveMob && liveMob.entity.hp > 0) {
+        this.targetMob = { ...liveMob.entity };
+      } else {
+        this.targetMob = null;
+      }
+    }
 
     // 6. Update Loot Drops & Check nearby interaction prompts (with Auto-Loot for common items)
     this.lootManager.update(delta);
@@ -1981,11 +2350,39 @@ export class MMOEngine {
       if (entityId === 'hero_player_1') {
         if (effect.damage) {
           this.player.takeDamage(effect.damage);
-          this.addFloatingText(`-${effect.damage}`, this.player.position.x, this.player.position.y + 1.8, effect.color, 'md');
+          this.addDirectionalDamageIndicator(
+            this.player.position.x + (Math.random() - 0.5) * 4,
+            this.player.position.z + (Math.random() - 0.5) * 4,
+            effect.damage,
+            false,
+            'hazard',
+            effect.color || '#ef4444'
+          );
+          this.addFloatingText(
+            `-${effect.damage}`,
+            this.player.position.x,
+            this.player.position.y + 1.8,
+            effect.color || '#ef4444',
+            'md',
+            false,
+            this.player.position.z,
+            'player_damage',
+            '🔥'
+          );
         }
         if (effect.heal) {
           this.player.heal(effect.heal);
-          this.addFloatingText(`+${effect.heal}`, this.player.position.x, this.player.position.y + 1.8, '#10b981', 'md');
+          this.addFloatingText(
+            `+${effect.heal}`,
+            this.player.position.x,
+            this.player.position.y + 1.8,
+            '#10b981',
+            'md',
+            false,
+            this.player.position.z,
+            'heal',
+            '💚'
+          );
         }
       }
     });
@@ -2009,11 +2406,59 @@ export class MMOEngine {
       this.fpsCounter = Math.round(this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length);
     }
 
-    // 10. Update Floating Combat Texts
+    // Update Combo State Timer & Decay
+    if (this.comboState.timer > 0) {
+      this.comboState.timer -= delta;
+      if (this.comboState.timer <= 0) {
+        if (this.comboState.count >= 5) {
+          this.addFloatingText(
+            'Combo Dropped',
+            this.player.position.x,
+            this.player.position.y + 2.0,
+            '#94a3b8',
+            'sm',
+            false,
+            this.player.position.z,
+            'system'
+          );
+        }
+        this.comboState.count = 0;
+        this.comboState.totalDamage = 0;
+        this.comboState.multiplier = 1.0;
+        this.comboState.rank = 'NORMAL';
+        this.comboState.rankName = 'COMBAT FLOW';
+        this.comboState.rankColor = '#e2e8f0';
+        this.comboState.recentHits = 0;
+      }
+    }
+
+    // Update Directional Damage Indicators Lifespan
+    this.directionalIndicators.forEach((ind) => {
+      ind.lifespan -= delta;
+      ind.opacity = Math.max(0, ind.lifespan / ind.maxLifespan);
+    });
+    this.directionalIndicators = this.directionalIndicators.filter((ind) => ind.lifespan > 0);
+
+    // 10. Update Floating Combat Texts with real-time 3D camera projection
+    const projVector = new THREE.Vector3();
     this.floatingTexts.forEach((t) => {
       t.y += t.vy * delta;
       t.lifespan -= delta;
-      t.opacity = Math.max(0, t.lifespan / 1.4);
+      const maxLife = t.isCrit || t.size === 'xl' ? 1.8 : 1.4;
+      t.opacity = Math.max(0, t.lifespan / maxLife);
+
+      // Realtime 3D to 2D screen coordinate projection
+      if (this.camera) {
+        projVector.set(t.x, t.y, t.z ?? this.player.position.z);
+        projVector.project(this.camera);
+        if (projVector.z <= 1.0) {
+          t.screenX = Math.round((projVector.x * 0.5 + 0.5) * 1000) / 10;
+          t.screenY = Math.round((-(projVector.y * 0.5) + 0.5) * 1000) / 10;
+        } else {
+          t.screenX = -100;
+          t.screenY = -100;
+        }
+      }
     });
     this.floatingTexts = this.floatingTexts.filter((t) => t.lifespan > 0);
 
@@ -2105,6 +2550,12 @@ export class MMOEngine {
         },
         autoLootEnabled: this.autoLootEnabled,
         pityCounters: this.lootManager.getAllPityCounters(),
+        facingAngle: this.player.facingAngle,
+        cameraYaw: this.cameraYaw,
+        activeMobs: this.mobManager.getAllMobs(),
+        npcs: this.npcs,
+        comboState: { ...this.comboState },
+        directionalIndicators: [...this.directionalIndicators],
       });
     }
   }
@@ -2484,6 +2935,56 @@ export class MMOEngine {
     const unequipped = this.player.unequipSlot(slotName as any);
     this.player.observeEquipmentState();
     return unequipped;
+  }
+
+  /**
+   * Authoritative player death handler:
+   * Resets all aggroed mobs directly to their fight start point on the map, restores their health,
+   * hides aggro lines, and respawns the hero at Sanctum Plaza.
+   */
+  public handlePlayerDeath(): void {
+    this.addFloatingText('💀 DEFEATED - Respawning at Sanctum...', this.player.position.x, this.player.position.y + 2.5, '#ef4444', 'xl');
+
+    // Trigger authoritative aggro wipe and reset mobs to their fight start point
+    const resetMobs = this.mobManager.handlePlayerDeath('hero_player_1');
+
+    // Respawn hero at open city hub plaza
+    this.player.position.set(0, 0, 8.0);
+    this.player.stats.hp = this.player.stats.maxHp;
+    this.player.isMoving = false;
+    this.player.isAttacking = false;
+
+    if (resetMobs.length > 0) {
+      this.addFloatingText(`↺ ${resetMobs.length} Monster zum Startpunkt zurückgekehrt`, 0, 3.0, '#00f0ff', 'lg');
+      this.addChatMessage(
+        'system',
+        'Aggro-Reset',
+        `💀 [Held gefallen] ${resetMobs.length} Monster haben Aggro verloren und sind direkt zu ihrem Kampf-Startpunkt auf der Karte zurückgekehrt.`
+      );
+    }
+  }
+
+  /**
+   * Taunt target or nearby mobs (Hotkeyed to 'T')
+   */
+  public tauntTarget(): void {
+    if (this.targetMob) {
+      this.mobManager.tauntMob(this.targetMob.id, 'hero_player_1', 'Hero Player');
+      soundSynth.playHitSound();
+      this.particleSystem.emit('beacon_activate', { x: this.targetMob.x, y: 1.0, z: this.targetMob.z }, '#fbbf24', 1.6);
+      this.addFloatingText('⚔️ TAUNT! (Aggro gezogen)', this.targetMob.x, this.targetMob.y + 2.4, '#fbbf24', 'xl');
+      this.addChatMessage('system', 'Spott', `[Spott] Du hast ${this.targetMob.name} verspottet! Bedrohung auf 125% des Spitzenwerts gesetzt.`);
+    } else {
+      const taunted = this.mobManager.tauntNearbyMobs('hero_player_1', this.player.position.x, this.player.position.z, 20.0, 'Hero Player');
+      if (taunted.length > 0) {
+        soundSynth.playHitSound();
+        this.particleSystem.emit('beacon_activate', this.player.position, '#fbbf24', 1.8);
+        this.addFloatingText(`⚔️ TAUNT! ${taunted.length} Monster verspottet`, this.player.position.x, this.player.position.y + 2.6, '#fbbf24', 'xl');
+        this.addChatMessage('system', 'Flächenspott', `[Spott] ${taunted.length} Monster im Umkreis von 20m verspottet!`);
+      } else {
+        this.addFloatingText('Kein Ziel in Reichweite für Spott (T)', this.player.position.x, this.player.position.y + 2.0, '#94a3b8', 'md');
+      }
+    }
   }
 
   public observePlayerEquipment(callback: (equipment: EquipmentState) => void): () => void {

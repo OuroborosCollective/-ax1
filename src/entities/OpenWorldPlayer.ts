@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { collisionSystem } from '../world/WorldCollisionSystem';
-import {
+import { ArmorType, ArmorMastery,
   CharacterAttributes,
   CharacterClassId,
   ClassSkill,
@@ -11,7 +11,8 @@ import {
   WeaponMastery,
   WeaponType,
 } from '../types';
-import { DEFAULT_WEAPON_MASTERIES, MMORPG_CLASSES, RPG_ITEMS_DATABASE } from '../data/mmorpgData';
+import { DEFAULT_WEAPON_MASTERIES, DEFAULT_ARMOR_MASTERIES, MMORPG_CLASSES, RPG_ITEMS_DATABASE } from '../data/mmorpgData';
+import { WEAPON_MASTERY_PERKS, ATTRIBUTE_BREAKPOINTS } from '../data/combatProgressionData';
 import { glbManager, GLBModelEntry } from '../core/GLBModelManager';
 import { ProceduralEquipmentVisuals } from '../core/ProceduralEquipmentVisuals';
 import { AscensionSystem } from '../engine/ascension/AscensionSystem';
@@ -67,6 +68,22 @@ export class OpenWorldPlayer {
   public weaponSlashTrail: THREE.Mesh | null = null;
   public isDodging: boolean = false;
   public dodgeTimer: number = 0;
+
+  // --- Active Dodge-Roll Mechanics & I-Frames ---
+  public isDodgeRolling: boolean = false;
+  public dodgeRollTimer: number = 0;
+  public iFrameTimer: number = 0;
+  public dodgeCooldownTimer: number = 0;
+  public dodgeDirection: THREE.Vector3 = new THREE.Vector3(0, 0, 1);
+
+  // --- Action Buffering & Skill Queuing ---
+  public bufferedSkillIndex: number | null = null;
+  public bufferTimer: number = 0;
+
+  // --- Bulwark Aegis (Defense 75 Breakpoint) ---
+  public bulwarkShieldActive: boolean = false;
+  public bulwarkShieldAmount: number = 0;
+  public bulwarkShieldCooldown: number = 0;
 
   // --- Open Classless Progression & Stats ---
   public stats: PlayerStats;
@@ -147,7 +164,7 @@ export class OpenWorldPlayer {
       statPoints: 3, // Start with 3 free stat points for immediate customization!
       attributes: initialAttributes,
       activeWeaponType: 'blade',
-      weaponMasteries: initialMasteries,
+      weaponMasteries: initialMasteries, armorMasteries: DEFAULT_ARMOR_MASTERIES,
       equippedSkills: [...classDef.skills],
       unlockedMilestoneSkills: [],
       totalMasteryLevel: 4,
@@ -171,6 +188,7 @@ export class OpenWorldPlayer {
       arms: RPG_ITEMS_DATABASE.find((i) => i.id === 'item_arms_starter') || null,
       legs: RPG_ITEMS_DATABASE.find((i) => i.id === 'item_legs_starter') || null,
       boots: RPG_ITEMS_DATABASE.find((i) => i.id === 'item_boots_starter') || null,
+      cape: null,
       relic: null,
       mount: RPG_ITEMS_DATABASE.find((i) => i.id === 'item_mount_horse') || null,
     };
@@ -381,6 +399,43 @@ export class OpenWorldPlayer {
     };
   }
 
+  public allocateMasteryPerk(weaponType: WeaponType, perkId: string): { success: boolean; message: string } {
+    const mastery = this.stats.weaponMasteries[weaponType];
+    if (!mastery) return { success: false, message: 'Weapon mastery not found.' };
+
+    if (!mastery.allocatedPerks) mastery.allocatedPerks = [];
+    if (mastery.allocatedPerks.includes(perkId)) {
+      return { success: false, message: 'This perk is already unlocked.' };
+    }
+
+    if ((mastery.perkPoints || 0) <= 0) {
+      return {
+        success: false,
+        message: 'No perk points available for this mastery! Earn more by reaching ranks 5, 10, 15, 20, 25, 30.',
+      };
+    }
+
+    const available = mastery.availablePerks || WEAPON_MASTERY_PERKS[weaponType] || [];
+    const perk = available.find((p) => p.id === perkId);
+    if (!perk) return { success: false, message: 'Perk definition not found.' };
+
+    if (mastery.level < perk.requiredMasteryLevel) {
+      return {
+        success: false,
+        message: `Requires ${mastery.name} Rank ${perk.requiredMasteryLevel} (Current: ${mastery.level}).`,
+      };
+    }
+
+    mastery.perkPoints -= 1;
+    mastery.allocatedPerks.push(perkId);
+    this.recalculateStats();
+
+    return {
+      success: true,
+      message: `Mastery Perk "${perk.name}" activated! ${perk.description}`,
+    };
+  }
+
   // --- Open Classless Progression Engine ---
   public getActiveWeaponType(): WeaponType {
     if (this.equipment.weapon && this.equipment.weapon.weaponType) {
@@ -405,30 +460,59 @@ export class OpenWorldPlayer {
       mastery.maxXp = Math.round(mastery.maxXp * 1.45);
       leveledUp = true;
 
-      // RuneScape reward: Award 1 Stat Point on every weapon mastery level up!
       this.stats.statPoints += 1;
 
-      // Scale mastery stats
-      if (mastery.bonusStats.attack) mastery.bonusStats.attack += 4;
-      if (mastery.bonusStats.spellPower) mastery.bonusStats.spellPower += 5;
-      if (mastery.bonusStats.armor) mastery.bonusStats.armor += 3;
-      if (mastery.bonusStats.critChance) mastery.bonusStats.critChance += 1.5;
-      if (mastery.bonusStats.maxHp) mastery.bonusStats.maxHp += 25;
-      if (mastery.bonusStats.maxResource) mastery.bonusStats.maxResource += 15;
+      // Award 1 Perk Point every 5 ranks (Rank 5, 10, 15, 20, 25, 30)
+      if (mastery.level % 5 === 0 && mastery.level <= 30) {
+        mastery.perkPoints = (mastery.perkPoints || 0) + 1;
+      }
+
+      if (mastery.level % 10 === 0) {
+        if (mastery.bonusStats.attack !== undefined) mastery.bonusStats.attack += 10;
+        if (mastery.bonusStats.critChance !== undefined) mastery.bonusStats.critChance += 0.10;
+      } else {
+        if (mastery.bonusStats.attack !== undefined) mastery.bonusStats.attack += 2;
+      }
+      this.stats.totalMasteryLevel += 1;
     }
-
-    // Recompute total mastery level
-    this.stats.totalMasteryLevel = Object.values(this.stats.weaponMasteries).reduce(
-      (sum, m) => sum + m.level,
-      0
-    );
-
-    // Also contribute to overall character XP
-    this.gainXp(Math.round(amount * 0.6));
-
-    this.recalculateStats();
+    if (leveledUp) this.recalculateStats();
     return { leveledUp, newLevel: mastery.level, mastery };
   }
+
+
+  
+  public gainArmorMasteryXp(
+    type: ArmorType,
+    amount: number
+  ): { leveledUp: boolean; newLevel: number; mastery: ArmorMastery } {
+    const mastery = this.stats.armorMasteries[type];
+    if (!mastery) return { leveledUp: false, newLevel: 1, mastery: this.stats.armorMasteries.chest };
+
+    mastery.xp += amount;
+    let leveledUp = false;
+
+    while (mastery.xp >= mastery.maxXp) {
+      mastery.xp -= mastery.maxXp;
+      mastery.level += 1;
+      mastery.maxXp = Math.round(mastery.maxXp * 1.45);
+      leveledUp = true;
+
+      this.stats.statPoints += 1;
+
+      if (mastery.level % 10 === 0) {
+          mastery.bonusStats.armor += 5; 
+          mastery.bonusStats.health += 50;
+          mastery.bonusStats.dodgeChance += 0.1;
+      } else {
+          mastery.bonusStats.armor += 1;
+          mastery.bonusStats.health += 10;
+      }
+      this.stats.totalMasteryLevel += 1;
+    }
+    if (leveledUp) this.recalculateStats();
+    return { leveledUp, newLevel: mastery.level, mastery };
+  }
+
 
   public equipSkillToHotbar(slotIndex: number, skill: ClassSkill) {
     if (slotIndex >= 0 && slotIndex < 5) {
@@ -800,7 +884,7 @@ export class OpenWorldPlayer {
     let bonusDodge = 0;
 
     // 1. Sum weapon masteries bonuses
-    Object.values(this.stats.weaponMasteries).forEach((m) => {
+    Object.entries(this.stats.weaponMasteries).forEach(([wKey, m]) => {
       if (m.bonusStats.attack) bonusAttack += m.bonusStats.attack;
       if (m.bonusStats.spellPower) bonusSpell += m.bonusStats.spellPower;
       if (m.bonusStats.armor) bonusArmor += m.bonusStats.armor;
@@ -809,6 +893,18 @@ export class OpenWorldPlayer {
       if (m.bonusStats.critChance) bonusCrit += m.bonusStats.critChance;
       if (m.bonusStats.moveSpeed) bonusSpeed += m.bonusStats.moveSpeed;
       if (m.bonusStats.dodgeChance) bonusDodge += m.bonusStats.dodgeChance;
+
+      // Sum allocated mastery perks
+      if (m.allocatedPerks && m.allocatedPerks.length > 0) {
+        const available = m.availablePerks || WEAPON_MASTERY_PERKS[wKey as WeaponType] || [];
+        m.allocatedPerks.forEach((perkId) => {
+          const perk = available.find((p) => p.id === perkId);
+          if (perk) {
+            if (perk.effectType === 'damage_mult') bonusAttack += Math.round(perk.value * 120);
+            if (perk.effectType === 'crit_damage') bonusCrit += Math.round(perk.value * 20);
+          }
+        });
+      }
     });
 
     // 2. Sum equipment stats
@@ -824,14 +920,14 @@ export class OpenWorldPlayer {
       }
     });
 
-    // 3. Sum RuneScape-Style Attribute scaling!
+    // 3. Sum RuneScape-Style Attribute scaling & Breakpoints!
     const { strength, agility, intelligence, defense } = this.stats.attributes;
 
-    // Strength: +3 Attack per point, +0.8% crit chance
+    // Strength: +3.5 Attack per point, +0.5% crit chance
     const strengthBonusAttack = (strength - 10) * 3.5;
     const strengthBonusCrit = (strength - 10) * 0.5;
 
-    // Agility: +0.7% Dodge per point, +0.8% move speed
+    // Agility: +0.75% Dodge per point, +0.8% move speed
     const agilityBonusDodge = (agility - 10) * 0.75;
     const agilityBonusSpeed = (agility - 10) * 0.8;
 
@@ -839,9 +935,20 @@ export class OpenWorldPlayer {
     const intBonusResource = (intelligence - 10) * 12;
     const intBonusSpell = (intelligence - 10) * 3.5;
 
-    // Defense: +4 Armor, +20 Max HP per point
+    // Defense: +4.5 Armor, +22 Max HP per point
     const defBonusArmor = (defense - 10) * 4.5;
     const defBonusHp = (defense - 10) * 22;
+
+    // Passive Attribute Breakpoints
+    if (strength >= 25) bonusAttack += 15;
+    if (strength >= 50) bonusCrit += 6;
+    if (strength >= 100) bonusAttack += 35;
+    if (agility >= 25) bonusSpeed += 8;
+    if (agility >= 75) bonusDodge += 10;
+    if (intelligence >= 25) bonusResource += 60;
+    if (intelligence >= 75) bonusSpell += 25;
+    if (defense >= 25) bonusArmor += 20;
+    if (defense >= 50) bonusHp += 200;
 
     const levelMult = 1 + (this.stats.level - 1) * 0.12;
     this.stats.maxHp = Math.round((classDef.baseHp + bonusHp + defBonusHp) * levelMult);
@@ -1001,21 +1108,65 @@ export class OpenWorldPlayer {
     this.inventory = this.inventory.filter((i) => i.id !== item.id);
   }
 
-  public takeDamage(amount: number): { damageTaken: number; isDead: boolean; dodged: boolean } {
-    // Check Agility-based Dodge
+  public takeDamage(amount: number): { damageTaken: number; isDead: boolean; dodged: boolean; iFrame?: boolean } {
+    // 1. Check Active I-Frames from Dodge-Roll
+    if (this.iFrameTimer > 0 || this.isDodgeRolling) {
+      return { damageTaken: 0, isDead: false, dodged: true, iFrame: true };
+    }
+
+    // 2. Check Agility-based Passive Dodge Chance
     const roll = Math.random() * 100;
     if (roll < this.stats.dodgeChance) {
       this.triggerDodge();
       return { damageTaken: 0, isDead: false, dodged: true };
     }
 
-    let effectiveDmg = amount * (100 / (100 + this.stats.armor * 0.6));
+    // 3. Hyperbolic Armor Formula with Diminishing Returns: DR % = Armor / (Armor + 120 + 12 * Level)
+    const armorFactor = this.stats.armor / (this.stats.armor + 120 + this.stats.level * 12);
+    let effectiveDmg = amount * (1.0 - Math.min(0.85, armorFactor));
+
+    // Defense 100 Breakpoint (Unyielding Juggernaut): -15% total damage taken
+    if (this.stats.attributes.defense >= 100) {
+      effectiveDmg *= 0.85;
+    }
+
+    // Active Knight Shield: -75% damage
     if (this.isShieldActive) {
       effectiveDmg *= 0.25;
     }
 
+    // Bulwark Aegis Shield (Defense 75 Breakpoint)
+    if (this.bulwarkShieldActive && this.bulwarkShieldAmount > 0) {
+      if (effectiveDmg <= this.bulwarkShieldAmount) {
+        this.bulwarkShieldAmount -= effectiveDmg;
+        effectiveDmg = 0;
+      } else {
+        effectiveDmg -= this.bulwarkShieldAmount;
+        this.bulwarkShieldAmount = 0;
+        this.bulwarkShieldActive = false;
+      }
+    }
+
     effectiveDmg = Math.max(1, Math.round(effectiveDmg));
     this.stats.hp = Math.max(0, this.stats.hp - effectiveDmg);
+
+    // Check Bulwark Aegis Trigger (< 30% HP)
+    if (
+      this.stats.attributes.defense >= 75 &&
+      !this.bulwarkShieldActive &&
+      this.bulwarkShieldCooldown <= 0 &&
+      this.stats.hp > 0 &&
+      this.stats.hp < this.stats.maxHp * 0.3
+    ) {
+      this.bulwarkShieldActive = true;
+      this.bulwarkShieldAmount = 250;
+      this.bulwarkShieldCooldown = 60.0;
+    }
+
+    // Intelligence 100 Breakpoint (Mind Over Matter): 15% damage converted to resource
+    if (this.stats.attributes.intelligence >= 100 && effectiveDmg > 0) {
+      this.restoreResource(Math.round(effectiveDmg * 0.15));
+    }
 
     return {
       damageTaken: effectiveDmg,
@@ -1027,6 +1178,43 @@ export class OpenWorldPlayer {
   public triggerDodge() {
     this.isDodging = true;
     this.dodgeTimer = 0.35;
+  }
+
+  // --- Active Tactical Dodge-Roll with I-Frames ---
+  public triggerDodgeRoll(dirX?: number, dirZ?: number): boolean {
+    if (this.dodgeCooldownTimer > 0 || this.isDodgeRolling) return false;
+
+    const resourceCost = this.stats.attributes.agility >= 50 ? 10 : 15;
+    if (!this.consumeResource(resourceCost)) {
+      return false;
+    }
+
+    this.isDodgeRolling = true;
+    this.dodgeRollTimer = 0.35;
+    this.iFrameTimer = this.stats.attributes.agility >= 75 ? 0.38 : 0.28;
+    this.dodgeCooldownTimer = this.stats.attributes.agility >= 50 ? 0.55 : 0.85;
+
+    const len = Math.hypot(dirX || 0, dirZ || 0);
+    if (len > 0.05) {
+      this.dodgeDirection.set((dirX || 0) / len, 0, (dirZ || 0) / len);
+    } else {
+      this.dodgeDirection.set(Math.sin(this.facingAngle), 0, Math.cos(this.facingAngle));
+    }
+
+    return true;
+  }
+
+  // --- Action Buffering / Skill Queuing ---
+  public queueSkill(skillIndex: number) {
+    this.bufferedSkillIndex = skillIndex;
+    this.bufferTimer = 0.22; // 220ms window
+  }
+
+  public clearBufferedSkill(): number | null {
+    const queued = this.bufferedSkillIndex;
+    this.bufferedSkillIndex = null;
+    this.bufferTimer = 0;
+    return queued;
   }
 
   public heal(amount: number) {
@@ -1142,7 +1330,36 @@ export class OpenWorldPlayer {
       }
     }
 
-    // 4. Dodge Timer
+    // 4. Dodge Timer & Active Dodge Roll Kinematics
+    if (this.dodgeCooldownTimer > 0) {
+      this.dodgeCooldownTimer -= delta;
+    }
+    if (this.iFrameTimer > 0) {
+      this.iFrameTimer -= delta;
+    }
+    if (this.bulwarkShieldCooldown > 0) {
+      this.bulwarkShieldCooldown -= delta;
+    }
+    if (this.bufferTimer > 0) {
+      this.bufferTimer -= delta;
+      if (this.bufferTimer <= 0) {
+        this.bufferedSkillIndex = null;
+      }
+    }
+
+    if (this.isDodgeRolling) {
+      this.dodgeRollTimer -= delta;
+      // High-speed evasive tumble
+      this.velocity.x = this.dodgeDirection.x * 22.0;
+      this.velocity.z = this.dodgeDirection.z * 22.0;
+      this.pelvisGroup.rotation.x -= delta * 22.0;
+
+      if (this.dodgeRollTimer <= 0) {
+        this.isDodgeRolling = false;
+        this.pelvisGroup.rotation.x = 0;
+      }
+    }
+
     if (this.isDodging) {
       this.dodgeTimer -= delta;
       this.pelvisGroup.rotation.y += delta * 18.0;
@@ -1152,77 +1369,87 @@ export class OpenWorldPlayer {
       }
     }
 
-    // 5. Passive Resource Regeneration (Scaled by Intelligence)
-    const intRegen = 10 + (this.stats.attributes.intelligence - 10) * 1.2;
+    // 5. Passive Resource Regeneration (Scaled by Intelligence + Breakpoints)
+    let intRegen = 10 + (this.stats.attributes.intelligence - 10) * 1.2;
+    if (this.stats.attributes.intelligence >= 25) {
+      intRegen += 2.5; // Aether Flow breakpoint
+    }
     this.restoreResource(delta * intRegen);
+
+    // Passive HP Regeneration from Defense 50 (Vigorous Vitality)
+    if (this.stats.attributes.defense >= 50 && this.stats.hp < this.stats.maxHp) {
+      this.heal(delta * 5.0);
+    }
 
     // 6. Real-time Equipment Observer Check (Guarantees immediate 3D re-render on equipment mutation)
     this.observeEquipmentState();
     this.proceduralVisuals.updateAnimations(delta, this.idleTime);
 
-    // 7. Movement Physics & Articulated Kinematics
-    const inputLen = Math.hypot(moveInput.x, moveInput.z);
-    this.isMoving = inputLen > 0.05;
-    const speed = this.baseMoveSpeed * this.stats.moveSpeedMultiplier;
+    // 7. Movement Physics & Articulated Kinematics (if not in active dodge roll)
+    if (!this.isDodgeRolling) {
+      const inputLen = Math.hypot(moveInput.x, moveInput.z);
+      this.isMoving = inputLen > 0.05;
+      const speed = this.baseMoveSpeed * this.stats.moveSpeedMultiplier;
 
-    if (this.isMoving) {
-      const normX = moveInput.x / inputLen;
-      const normZ = moveInput.z / inputLen;
+      if (this.isMoving) {
+        const normX = moveInput.x / inputLen;
+        const normZ = moveInput.z / inputLen;
 
-      this.velocity.x = normX * speed;
-      this.velocity.z = normZ * speed;
+        this.velocity.x = normX * speed;
+        this.velocity.z = normZ * speed;
 
-      // Rotate character towards movement
-      this.targetAngle = Math.atan2(normX, normZ);
-      let angleDiff = this.targetAngle - this.facingAngle;
-      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-      this.facingAngle += angleDiff * Math.min(1.0, delta * 14.0);
+        // Rotate character towards movement
+        this.targetAngle = Math.atan2(normX, normZ);
+        let angleDiff = this.targetAngle - this.facingAngle;
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        this.facingAngle += angleDiff * Math.min(1.0, delta * 14.0);
 
-      // --- Feet & Leg Walking / Running Gait Kinematics ---
-      if (!this.stats.isMounted) {
-        const gaitSpeed = 10.5 * (speed / this.baseMoveSpeed);
-        this.walkCyclePhase += delta * gaitSpeed;
+        // --- Feet & Leg Walking / Running Gait Kinematics ---
+        if (!this.stats.isMounted) {
+          const gaitSpeed = 10.5 * (speed / this.baseMoveSpeed);
+          this.walkCyclePhase += delta * gaitSpeed;
 
-        const strideExtent = 0.65;
-        const leftLegCycle = Math.sin(this.walkCyclePhase);
-        const rightLegCycle = -leftLegCycle;
+          const strideExtent = 0.65;
+          const leftLegCycle = Math.sin(this.walkCyclePhase);
+          const rightLegCycle = -leftLegCycle;
 
-        // Hip swing forward & backward
-        this.leftHipPivot.rotation.x = leftLegCycle * strideExtent;
-        this.rightHipPivot.rotation.x = rightLegCycle * strideExtent;
+          // Hip swing forward & backward
+          this.leftHipPivot.rotation.x = leftLegCycle * strideExtent;
+          this.rightHipPivot.rotation.x = rightLegCycle * strideExtent;
 
-        // Natural knee bend on backstroke, straightens when planting foot forward
-        this.leftKneePivot.rotation.x = Math.max(0, -leftLegCycle) * 1.15;
-        this.rightKneePivot.rotation.x = Math.max(0, -rightLegCycle) * 1.15;
+          // Natural knee bend on backstroke, straightens when planting foot forward
+          this.leftKneePivot.rotation.x = Math.max(0, -leftLegCycle) * 1.15;
+          this.rightKneePivot.rotation.x = Math.max(0, -rightLegCycle) * 1.15;
 
-        // Torso & Pelvic Vertical Bounce and subtle sway
-        const bounce = Math.abs(Math.sin(this.walkCyclePhase * 2)) * 0.07;
-        this.pelvisGroup.position.y = 0.95 - bounce;
-        this.torsoGroup.rotation.z = Math.sin(this.walkCyclePhase) * 0.04;
-        this.torsoGroup.rotation.x = 0.08; // Forward sprint lean
+          // Torso & Pelvic Vertical Bounce and subtle sway
+          const bounce = Math.abs(Math.sin(this.walkCyclePhase * 2)) * 0.07;
+          this.pelvisGroup.position.y = 0.95 - bounce;
+          this.torsoGroup.rotation.z = Math.sin(this.walkCyclePhase) * 0.04;
+          this.torsoGroup.rotation.x = 0.08; // Forward sprint lean
 
-        // Counter-arm swing when moving (keeping weapon held firmly in hand)
-        if (!this.isAttacking) {
-          this.leftArmPivot.rotation.x = -leftLegCycle * 0.55;
-          this.rightArmPivot.rotation.x = -rightLegCycle * 0.55;
-          this.leftForearmPivot.rotation.x = -0.3;
-          this.rightForearmPivot.rotation.x = -0.3;
-          this.weaponPivot.rotation.x = THREE.MathUtils.lerp(this.weaponPivot.rotation.x, 0.2, delta * 8);
+          // Counter-arm swing when moving (keeping weapon held firmly in hand)
+          if (!this.isAttacking) {
+            this.leftArmPivot.rotation.x = -leftLegCycle * 0.55;
+            this.rightArmPivot.rotation.x = -rightLegCycle * 0.55;
+            this.leftForearmPivot.rotation.x = -0.3;
+            this.rightForearmPivot.rotation.x = -0.3;
+            this.weaponPivot.rotation.x = THREE.MathUtils.lerp(this.weaponPivot.rotation.x, 0.2, delta * 8);
+          }
+        } else {
+          // Mount Gallop animation
+          this.gallopPhase += delta * 15.0;
+          this.mountLegs.forEach((leg, index) => {
+            leg.rotation.x = Math.sin(this.gallopPhase + (index % 2) * Math.PI) * 0.5;
+          });
         }
       } else {
-        // Mount Gallop animation
-        this.gallopPhase += delta * 15.0;
-        this.mountLegs.forEach((leg, index) => {
-          leg.rotation.x = Math.sin(this.gallopPhase + (index % 2) * Math.PI) * 0.5;
-        });
+        // Decelerate
+        this.velocity.x *= 0.65;
+        this.velocity.z *= 0.65;
       }
-    } else {
-      // Decelerate
-      this.velocity.x *= 0.65;
-      this.velocity.z *= 0.65;
 
-      // --- Articulated Combat Idle & Weapon-Holding Kinematics ---
+    // --- Articulated Combat Idle & Weapon-Holding Kinematics ---
       if (!this.stats.isMounted) {
         this.walkCyclePhase = 0;
         const breathCycle = Math.sin(this.idleTime * 2.4);
@@ -1420,6 +1647,11 @@ export class OpenWorldPlayer {
     this.group.position.copy(this.position);
     this.group.rotation.y = this.facingAngle;
 
+    this.stats.x = this.position.x;
+    this.stats.y = this.position.y;
+    this.stats.z = this.position.z;
+    this.stats.facingAngle = this.facingAngle;
+
     // Aura floating
     this.classAura.rotation.y += delta * 0.5;
   }
@@ -1552,7 +1784,7 @@ export function createDefaultPlayerStats(startingClass: CharacterClassId = 'knig
     statPoints: 3,
     attributes: initialAttributes,
     activeWeaponType: 'blade',
-    weaponMasteries: initialMasteries,
+    weaponMasteries: initialMasteries, armorMasteries: DEFAULT_ARMOR_MASTERIES,
     equippedSkills: [...classDef.skills],
     unlockedMilestoneSkills: [],
     totalMasteryLevel: 4,

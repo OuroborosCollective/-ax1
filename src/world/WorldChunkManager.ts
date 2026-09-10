@@ -2,6 +2,19 @@ import * as THREE from 'three';
 import { BiomeType, LandmarkType, SolidObstacle, SolidObstacleType, WorldChunkData, WorldExpansionStats } from '../types';
 import { collisionSystem } from './WorldCollisionSystem';
 
+
+export const ResourceDensityMap: Record<BiomeType, Record<string, number>> = {
+  'whispering_forest': { wood: 1.8, herb: 1.5, ore: 0.5, fabric: 1.0, leather: 1.0 },
+  'emberfall_march': { ore: 2.0, wood: 0.2, herb: 1.0, fabric: 1.0, leather: 1.0 },
+  'void_crater': { ore: 2.5, wood: 0.0, herb: 0.2, fabric: 1.0, leather: 1.0 },
+  'sanctum_capital': { wood: 1.0, ore: 1.0, herb: 1.0, fabric: 1.0, leather: 1.0 },
+  'clockwork_woods': { wood: 1.5, ore: 1.2, herb: 0.8, fabric: 1.0, leather: 1.0 },
+  'scorched_quarry': { wood: 0.1, ore: 2.2, herb: 0.3, fabric: 1.0, leather: 1.0 },
+  'sunwatch_bastion': { wood: 1.0, ore: 1.0, herb: 1.0, fabric: 1.0, leather: 1.0 },
+  'ancient_dungeon': { wood: 0.0, ore: 2.0, herb: 0.1, fabric: 1.0, leather: 1.0 },
+  'frontier_border': { wood: 1.2, ore: 1.2, herb: 1.2, fabric: 1.0, leather: 1.0 },
+};
+
 export class WorldChunkManager {
   public scene: THREE.Scene;
   public group: THREE.Group;
@@ -57,6 +70,7 @@ export class WorldChunkManager {
       materialTheme: 'starpath',
       obstacles: [],
       featureDescription: 'Goldverzierte Palaststraße, Aetherium-Brunnen & königliche Wachtürme',
+      resourceDensity: { wood: 0.5, ore: 0.5, herb: 1.0 },
       createdAt: new Date().toISOString(),
     };
 
@@ -465,6 +479,9 @@ export class WorldChunkManager {
       }
     }
 
+    
+    const resourceDensity = ResourceDensityMap[biome] || { wood: 1.0, ore: 1.0, herb: 1.0, fabric: 1.0, leather: 1.0 };
+
     const chunkData: WorldChunkData = {
       chunkKey,
       chunkX: cx,
@@ -479,9 +496,11 @@ export class WorldChunkManager {
       elevationBase,
       materialTheme,
       obstacles,
+      resourceDensity,
       featureDescription: `${kingdom} - ${landmarkName} mit ${obstacles.length} festen Objekten`,
       createdAt: new Date().toISOString(),
     };
+
 
     // Store in world state
     this.chunks.set(chunkKey, chunkData);

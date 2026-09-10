@@ -24,6 +24,8 @@ import {
   GatheringProfessionId,
   ProfessionId,
   ProfessionSkill,
+  ComboState,
+  DirectionalDamageIndicator,
 } from './types';
 import { GameHUD } from './components/GameHUD';
 import { InventoryModal } from './components/InventoryModal';
@@ -88,10 +90,13 @@ export default function App() {
     arms: null,
     legs: null,
     boots: null,
+    cape: null,
     relic: null,
     mount: null,
   }));
   const [inventory, setInventory] = useState<RPGItem[]>([]);
+  const [comboState, setComboState] = useState<ComboState | null>(null);
+  const [directionalIndicators, setDirectionalIndicators] = useState<DirectionalDamageIndicator[]>([]);
 
   // Modals States
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
@@ -115,6 +120,10 @@ export default function App() {
   const [autoLootEnabled, setAutoLootEnabled] = useState(true);
   const [pityCounters, setPityCounters] = useState<Record<string, number>>({});
   const [buybackQueue, setBuybackQueue] = useState<SoldBuybackItem[]>([]);
+  const [facingAngle, setFacingAngle] = useState<number>(0);
+  const [cameraYaw, setCameraYaw] = useState<number>(0);
+  const [activeMobs, setActiveMobs] = useState<WorldMobEntity[]>([]);
+  const [npcs, setNpcs] = useState<NPCCharacter[]>([]);
 
   // Initialize MMO Engine with WebGL verification and DOM timing safeguard
   useEffect(() => {
@@ -165,6 +174,12 @@ export default function App() {
         if (state.engineMetrics) setEngineMetrics({ ...state.engineMetrics });
         if (state.autoLootEnabled !== undefined) setAutoLootEnabled(state.autoLootEnabled);
         if (state.pityCounters) setPityCounters({ ...state.pityCounters });
+        if (state.facingAngle !== undefined) setFacingAngle(state.facingAngle);
+        if (state.cameraYaw !== undefined) setCameraYaw(state.cameraYaw);
+        if (state.activeMobs) setActiveMobs([...state.activeMobs]);
+        if (state.npcs) setNpcs([...state.npcs]);
+        if (state.comboState) setComboState({ ...state.comboState });
+        if (state.directionalIndicators) setDirectionalIndicators([...state.directionalIndicators]);
       };
 
 
@@ -669,6 +684,10 @@ export default function App() {
           netStats={netStats}
           activeBuffs={activeBuffs}
           engineMetrics={engineMetrics}
+          facingAngle={facingAngle || stats.facingAngle || engineRef.current?.player?.facingAngle || 0}
+          cameraYaw={cameraYaw || engineRef.current?.cameraYaw || 0}
+          activeMobs={activeMobs.length > 0 ? activeMobs : (engineRef.current?.mobManager?.getAllMobs() ?? [])}
+          npcs={npcs.length > 0 ? npcs : (engineRef.current?.npcs ?? [])}
           onCastSkill={handleCastSkill}
           onCycleTarget={handleCycleTarget}
           onVirtualMove={handleVirtualMove}
@@ -695,6 +714,8 @@ export default function App() {
             }
           }}
           pityCounters={pityCounters}
+          comboState={comboState || undefined}
+          directionalIndicators={directionalIndicators}
           onSendMessage={handleSendMessage}
         />
       </ErrorBoundary>

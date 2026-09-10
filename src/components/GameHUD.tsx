@@ -29,6 +29,8 @@ import {
   Activity,
   Hammer,
   Crown,
+  Flame,
+  Swords,
 } from 'lucide-react';
 import {
   ActiveBuffSummary,
@@ -46,10 +48,14 @@ import {
   Quest,
   RPGItem,
   WorldMobEntity,
+  ComboState,
+  DirectionalDamageIndicator,
+  WeaponType,
 } from '../types';
 import { MMORPG_CLASSES } from '../data/mmorpgData';
 import { soundSynth } from '../audio/SoundSynthesizer';
 import { VirtualJoystick } from './VirtualJoystick';
+import { MiniMap } from './MiniMap';
 
 interface GameHUDProps {
   playerStats: PlayerStats;
@@ -65,6 +71,12 @@ interface GameHUDProps {
   netStats?: MultiplayerNetStats;
   activeBuffs?: ActiveBuffSummary[];
   engineMetrics?: EnginePerformanceMetrics;
+  facingAngle?: number;
+  cameraYaw?: number;
+  activeMobs?: WorldMobEntity[];
+  npcs?: NPCCharacter[];
+  comboState?: ComboState;
+  directionalIndicators?: DirectionalDamageIndicator[];
   onCastSkill: (skillIndex: number) => void;
   onCycleTarget?: () => void;
   onVirtualMove?: (forward: number, right: number) => void;
@@ -104,6 +116,12 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   netStats,
   activeBuffs = [],
   engineMetrics,
+  facingAngle = 0,
+  cameraYaw = 0,
+  activeMobs = [],
+  npcs = [],
+  comboState,
+  directionalIndicators = [],
   autoLootEnabled = true,
   onToggleAutoLoot,
   pityCounters = {},
@@ -500,8 +518,34 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                   style={{ width: `${Math.max(0, (targetMob.hp / targetMob.maxHp) * 100)}%` }}
                 />
                 <span className="absolute inset-0 flex items-center justify-center text-[8px] sm:text-[9px] font-mono font-bold text-white drop-shadow">
-                  {Math.round((targetMob.hp / targetMob.maxHp) * 100)}%
+                  {Math.round((targetMob.hp / targetMob.maxHp) * 100)}% ({Math.round(targetMob.hp)}/{targetMob.maxHp})
                 </span>
+              </div>
+
+              {/* Threat Table & Aggro Target Indicator */}
+              <div className="flex items-center justify-between text-[8px] font-mono pt-0.5">
+                <div className="flex items-center gap-1 truncate">
+                  <span className="text-gray-400">Aggro:</span>
+                  {targetMob.targetId ? (
+                    <span
+                      className={`font-bold px-1 py-0.2 rounded border truncate max-w-[90px] sm:max-w-[130px] ${
+                        targetMob.targetId === 'hero_player_1'
+                          ? 'text-red-300 bg-red-950/80 border-red-500/80 animate-pulse'
+                          : 'text-amber-300 bg-amber-950/60 border-amber-600/60'
+                      }`}
+                      title={targetMob.targetId === 'hero_player_1' ? 'Du hältst die höchste Bedrohung!' : `Aggro liegt bei ${targetMob.targetName || targetMob.targetId}`}
+                    >
+                      {targetMob.targetId === 'hero_player_1' ? '🔥 DU (100% Aggro)' : `🎯 ${targetMob.targetName || targetMob.targetId}`}
+                    </span>
+                  ) : (
+                    <span className="text-gray-500 italic">Kein Ziel</span>
+                  )}
+                </div>
+                {targetMob.topThreat !== undefined && targetMob.topThreat > 0 && (
+                  <span className="text-amber-400/90 font-mono text-[7.5px] bg-black/60 px-1 py-0.2 rounded border border-gray-800">
+                    Threat: {Math.round(targetMob.topThreat)}
+                  </span>
+                )}
               </div>
 
               {/* Boss Cast Bar */}
@@ -517,8 +561,18 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
         )}
 
-        {/* Top-Right: Quick Micro-Menu & Objective Tracker */}
+        {/* Top-Right: Radar Mini-Map, Quick Micro-Menu & Objective Tracker */}
         <div className="flex flex-col items-end gap-1.5 pointer-events-auto">
+          {/* Real-time Steampunk MiniMap with Mystic Flower Wells & Enemy Spawns */}
+          <MiniMap
+            playerStats={playerStats}
+            facingAngle={facingAngle || playerStats.facingAngle || 0}
+            cameraYaw={cameraYaw}
+            activeMobs={activeMobs}
+            npcs={npcs}
+            onOpenFullMap={onOpenMap}
+          />
+
           {/* Micro-Menu Buttons (Minimum 44px touch targets on mobile) */}
           <div className="flex items-center gap-1">
             <button
@@ -723,25 +777,219 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         </div>
       </div>
 
-      {/* Floating Combat Text Overlay */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        {floatingTexts.map((txt) => (
+      {/* ================= DIRECTIONAL DAMAGE HIT INDICATORS OVERLAY ================= */}
+      {directionalIndicators && directionalIndicators.length > 0 && (
+        <div className="absolute inset-0 pointer-events-none overflow-hidden z-20 flex items-center justify-center">
+          {directionalIndicators.map((ind) => {
+            const angleDeg = (ind.angleRad * 180) / Math.PI;
+            const indColor = ind.color || (ind.isCrit ? '#f59e0b' : '#ef4444');
+            return (
+              <div
+                key={ind.id}
+                className="absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-75"
+                style={{ opacity: ind.opacity }}
+              >
+                {/* 360° Rotated Directional Reticle Pointer */}
+                <div
+                  className="absolute flex flex-col items-center justify-start pointer-events-none"
+                  style={{
+                    width: '340px',
+                    height: '340px',
+                    transform: `rotate(${angleDeg}deg)`,
+                  }}
+                >
+                  {/* Top Arrow / Arc Chevron pointing toward damage source */}
+                  <div
+                    className="relative flex flex-col items-center"
+                    style={{
+                      filter: `drop-shadow(0 0 10px ${indColor})`,
+                    }}
+                  >
+                    <div
+                      className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-b-[18px]"
+                      style={{
+                        borderBottomColor: indColor,
+                      }}
+                    />
+                    <div
+                      className="w-14 h-1 rounded-full mt-0.5"
+                      style={{
+                        backgroundColor: indColor,
+                        boxShadow: `0 0 8px ${indColor}`,
+                      }}
+                    />
+                  </div>
+
+                  {/* Upright damage amount tag positioned at arc */}
+                  <div
+                    className="mt-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-black border backdrop-blur-md shadow-lg flex items-center gap-1 select-none"
+                    style={{
+                      transform: `rotate(${-angleDeg}deg)`,
+                      backgroundColor: 'rgba(10, 15, 25, 0.9)',
+                      borderColor: indColor,
+                      color: indColor,
+                      boxShadow: `0 0 10px ${indColor}40`,
+                    }}
+                  >
+                    <span>{ind.isCrit ? '💥' : ind.sourceType === 'boss' ? '👑' : '🛡️'}</span>
+                    <span>-{Math.round(ind.damage)}</span>
+                  </div>
+                </div>
+
+                {/* Perimeter Directional Screen Flash Vignette */}
+                <div
+                  className="absolute inset-0 pointer-events-none"
+                  style={{
+                    background: `radial-gradient(ellipse at ${50 + Math.sin(ind.angleRad) * 45}% ${50 - Math.cos(ind.angleRad) * 45}%, ${indColor}35 0%, transparent 60%)`,
+                  }}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ================= COMBO COUNTER VISUAL WIDGET ================= */}
+      {comboState && comboState.count > 0 && comboState.timer > 0 && (
+        <div
+          className="absolute right-3 sm:right-6 top-[38%] -translate-y-1/2 z-30 pointer-events-none flex flex-col items-end animate-in fade-in zoom-in-95 duration-150"
+          style={{ filter: `drop-shadow(0 0 14px ${comboState.rankColor}40)` }}
+        >
+          {/* Main Combo Card */}
           <div
-            key={txt.id}
-            className="absolute font-mono font-black transition-all duration-75 select-none"
+            className="p-3 sm:p-4 rounded-2xl border backdrop-blur-xl flex flex-col items-end min-w-[170px] sm:min-w-[210px] shadow-2xl transition-all duration-200"
             style={{
-              left: `${50 + (txt.x % 15)}%`,
-              top: `${40 - txt.y * 3.5}%`,
-              color: txt.color,
-              fontSize: `${txt.size}px`,
-              opacity: txt.opacity,
-              textShadow: '0 2px 8px rgba(0,0,0,0.9), 0 0 12px rgba(255,255,255,0.4)',
-              transform: `translate(-50%, -50%) scale(${txt.isCrit ? 1.3 : 1.0})`,
+              backgroundColor: 'rgba(8, 16, 30, 0.88)',
+              borderColor: `${comboState.rankColor}80`,
+              boxShadow: `0 0 25px ${comboState.rankColor}25, inset 0 0 15px ${comboState.rankColor}15`,
             }}
           >
-            {txt.text}
+            {/* Header: Weapon Type & Rank Pill */}
+            <div className="flex items-center gap-1.5 mb-1">
+              <span
+                className="px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 border"
+                style={{
+                  backgroundColor: `${comboState.rankColor}15`,
+                  borderColor: `${comboState.rankColor}50`,
+                  color: comboState.rankColor,
+                }}
+              >
+                <Zap className="w-2.5 h-2.5" />
+                {comboState.activeWeaponType ? comboState.activeWeaponType.toUpperCase() : 'WEAPON'}
+              </span>
+              <span
+                className="px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-serif font-black tracking-wide border uppercase"
+                style={{
+                  backgroundColor: `${comboState.rankColor}25`,
+                  borderColor: comboState.rankColor,
+                  color: comboState.rankColor,
+                  boxShadow: `0 0 8px ${comboState.rankColor}60`,
+                }}
+              >
+                {comboState.rankName || comboState.rank}
+              </span>
+            </div>
+
+            {/* Giant Dynamic Combo Number & HITS Label */}
+            <div className="flex items-baseline gap-1 my-0.5">
+              <span
+                className="font-mono font-black text-4xl sm:text-5xl tracking-tighter leading-none transition-transform select-none"
+                style={{
+                  color: comboState.rankColor,
+                  textShadow: `0 0 20px ${comboState.rankColor}, 0 2px 8px rgba(0,0,0,0.9)`,
+                }}
+              >
+                {comboState.count}
+              </span>
+              <span className="font-serif font-black text-xs sm:text-sm text-gray-200 uppercase tracking-widest">
+                Hits
+              </span>
+            </div>
+
+            {/* Combo Damage Multiplier & Total Damage Stats */}
+            <div className="flex items-center justify-between w-full mt-1 pt-1.5 border-t border-gray-800/80 text-[10px] font-mono">
+              <span className="text-gray-400 flex items-center gap-1">
+                <Flame className="w-3 h-3 text-amber-400" />
+                <span>{comboState.totalDamage.toLocaleString()} Dmg</span>
+              </span>
+              <span
+                className="font-bold px-1.5 py-0.5 rounded border"
+                style={{
+                  backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                  borderColor: 'rgba(245, 158, 11, 0.4)',
+                  color: '#fbbf24',
+                }}
+              >
+                +{Math.round((comboState.multiplier - 1) * 100)}% DMG
+              </span>
+            </div>
+
+            {/* Combo Decay Timer Bar */}
+            <div className="w-full h-1.5 bg-black/90 rounded-full border border-gray-800/80 overflow-hidden mt-2">
+              <div
+                className="h-full transition-all duration-75"
+                style={{
+                  width: `${Math.max(0, Math.min(100, (comboState.timer / comboState.maxTimer) * 100))}%`,
+                  backgroundColor: comboState.timer < 1.0 ? '#ef4444' : comboState.rankColor,
+                  boxShadow: `0 0 8px ${comboState.rankColor}`,
+                }}
+              />
+            </div>
           </div>
-        ))}
+        </div>
+      )}
+
+      {/* ================= ENHANCED 3D FLOATING COMBAT TEXT OVERLAY ================= */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
+        {floatingTexts.map((txt) => {
+          // Use 3D projected screen coordinates if available, fallback to screen center offset
+          const hasProjectedCoords =
+            txt.screenX !== undefined &&
+            txt.screenY !== undefined &&
+            txt.screenX >= -10 &&
+            txt.screenX <= 110 &&
+            txt.screenY >= -10 &&
+            txt.screenY <= 110;
+
+          const leftPos = hasProjectedCoords ? `${txt.screenX}%` : `${50 + (txt.x % 15)}%`;
+          const topPos = hasProjectedCoords ? `${txt.screenY}%` : `${40 - txt.y * 3.5}%`;
+
+          // Font sizing based on size prop
+          const fontSizeStyle =
+            txt.size === 'xl' || txt.isCrit
+              ? 'text-xl sm:text-2xl font-black'
+              : txt.size === 'lg'
+              ? 'text-base sm:text-lg font-extrabold'
+              : txt.size === 'sm'
+              ? 'text-[11px] font-semibold'
+              : 'text-sm font-bold';
+
+          return (
+            <div
+              key={txt.id}
+              className={`absolute font-mono transition-all duration-75 select-none flex items-center gap-1 ${fontSizeStyle}`}
+              style={{
+                left: leftPos,
+                top: topPos,
+                color: txt.color,
+                opacity: txt.opacity,
+                textShadow: txt.isCrit
+                  ? '0 0 12px rgba(251,191,36,0.9), 0 2px 6px rgba(0,0,0,0.95)'
+                  : '0 2px 8px rgba(0,0,0,0.95), 0 0 8px rgba(255,255,255,0.2)',
+                transform: `translate(-50%, -50%) scale(${txt.isCrit ? 1.35 : 1.0})`,
+                filter: txt.isCrit ? 'drop-shadow(0 0 8px #fbbf24)' : undefined,
+              }}
+            >
+              {txt.icon && <span className="text-sm">{txt.icon}</span>}
+              <span>{txt.text}</span>
+              {txt.isCrit && (
+                <span className="text-[10px] uppercase font-serif tracking-widest px-1 py-0.2 rounded bg-amber-500 text-black font-black">
+                  CRIT!
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* ================= MIDDLE: Contextual Action Prompt ================= */}

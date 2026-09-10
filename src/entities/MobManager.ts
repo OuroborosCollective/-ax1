@@ -7,6 +7,7 @@ import { navGrid, Waypoint } from '../engine/pathfinding/NavGrid';
 import { collisionSystem } from '../world/WorldCollisionSystem';
 import { createMobStateMachine, MobFsmContext, MobVisualReference } from '../engine/fsm/MobFSM';
 import { EntityStateMachine } from '../engine/fsm/EntityStateMachine';
+import { ThreatTetherVisualizer, TargetPositionInfo } from '../engine/combat/ThreatTetherVisualizer';
 
 interface MobVisual {
   entity: WorldMobEntity;
@@ -26,14 +27,20 @@ export class MobManager {
   public scene: THREE.Scene;
   public lootManager: LootDropManager;
   public mobs: MobVisual[] = [];
+  public tetherVisualizer: ThreatTetherVisualizer;
   private mobCounter: number = 0;
 
   // Boss telegraph state
   public bossEntity: WorldMobEntity | null = null;
 
+  public getAllMobs(): WorldMobEntity[] {
+    return this.mobs.filter((m) => m.entity.hp > 0).map((m) => m.entity);
+  }
+
   constructor(scene: THREE.Scene, lootManager: LootDropManager) {
     this.scene = scene;
     this.lootManager = lootManager;
+    this.tetherVisualizer = new ThreatTetherVisualizer(scene);
 
     // Seed Open World Mobs across zones
     this.seedOpenWorldMobs();
@@ -675,7 +682,11 @@ export class MobManager {
     delta: number,
     playerX: number,
     playerZ: number,
-    onMobAttack?: (mob: WorldMobEntity, dmg: number) => void
+    playerHp: number = 100,
+    onMobAttack?: (mob: WorldMobEntity, dmg: number, targetId?: string) => void,
+    getTargetPosition?: (
+      entityId: string
+    ) => { x: number; y: number; z: number; isAlive: boolean; isPlayer?: boolean; name?: string } | null
   ) {
     const activeMobs: MobVisual[] = [];
 
@@ -690,9 +701,11 @@ export class MobManager {
             visual: visual as any,
             playerX,
             playerZ,
+            playerHp,
             delta,
             onMobAttack,
             scene: this.scene,
+            getTargetPosition,
             onMobRespawnRequested: (deadMob) => {
               setTimeout(() => {
                 this.spawnMob(deadMob.type, deadMob.spawnX, deadMob.spawnZ, deadMob.level);
@@ -705,6 +718,7 @@ export class MobManager {
 
       // 2. Handle Death Lifecycle and Scene Removal
       if (visual.fsm?.getCurrentStateId() === 'dead') {
+        this.tetherVisualizer.removeTether(mob.id);
         if (visual.deathAnimTimer !== undefined) {
           visual.deathAnimTimer -= delta;
           if (visual.deathAnimTimer <= 0) {
@@ -717,7 +731,49 @@ export class MobManager {
       // 3. Update 3D Group Transform
       visual.group.position.set(mob.x, 0, mob.z);
 
-      // 4. Update Billboarded Overhead Health Bar
+      // 4. Synchronize Threat Data & Aggro Table
+      mob.aggroTable = threatMatrix.getAggroTable(mob.id);
+      const activeTargetId = threatMatrix.getTarget(mob.id);
+      mob.targetId = activeTargetId;
+      const topThreats = threatMatrix.getTopThreats(mob.id);
+      mob.topThreat = topThreats[0]?.threat || 0;
+
+      // 5. Update Visual Indicator Line Linking Mob to Its Current Target
+      if (
+        mob.hp > 0 &&
+        mob.isAggroed &&
+        activeTargetId &&
+        visual.fsm?.getCurrentStateId() === 'combat'
+      ) {
+        let targetPosInfo: TargetPositionInfo | null = null;
+        if (activeTargetId === 'hero_player_1') {
+          targetPosInfo = {
+            x: playerX,
+            y: 0,
+            z: playerZ,
+            isPlayer: true,
+            isAlive: playerHp > 0,
+            name: 'Hero Player',
+          };
+        } else if (getTargetPosition) {
+          targetPosInfo = getTargetPosition(activeTargetId) as TargetPositionInfo;
+        }
+
+        if (targetPosInfo && targetPosInfo.isAlive) {
+          this.tetherVisualizer.updateTether(
+            mob.id,
+            { x: mob.x, y: 0, z: mob.z, height: mob.isBoss ? 5.5 : mob.isElite ? 2.5 : 1.8 },
+            activeTargetId,
+            targetPosInfo
+          );
+        } else {
+          this.tetherVisualizer.hideTether(mob.id);
+        }
+      } else {
+        this.tetherVisualizer.hideTether(mob.id);
+      }
+
+      // 6. Update Billboarded Overhead Health Bar
       const hpPct = Math.max(0, mob.hp / mob.maxHp);
       visual.healthBarMesh.scale.x = Math.max(0.01, hpPct);
       visual.healthBarMesh.rotation.y = Math.atan2(playerX - mob.x, playerZ - mob.z);
@@ -726,13 +782,17 @@ export class MobManager {
     });
 
     this.mobs = activeMobs;
+
+    // Update pulsing tether lines
+    this.tetherVisualizer.update(delta);
   }
 
   public damageMob(
     mobId: string,
     damage: number,
     attackerId: string = 'hero_player_1',
-    isTankRole: boolean = false
+    isTankRole: boolean = false,
+    attackerName?: string
   ): {
     mob: WorldMobEntity | null;
     isKilled: boolean;
@@ -744,11 +804,33 @@ export class MobManager {
     if (!visual) return { mob: null, isKilled: false };
 
     const mob = visual.entity;
+
+    // Record fight start point on initial engagement
+    if (mob.fightStartX === undefined) {
+      mob.fightStartX = mob.x;
+      mob.fightStartZ = mob.z;
+      threatMatrix.recordFightStart(mobId, mob.x, mob.z);
+    }
+
     mob.hp -= damage;
     mob.isAggroed = true; // immediately retaliate
 
     // Authoritative Threat Matrix update
-    threatMatrix.addDamageThreat(mobId, attackerId, damage, isTankRole);
+    threatMatrix.addDamageThreat(mobId, attackerId, damage, isTankRole, attackerName);
+    mob.targetId = threatMatrix.getTarget(mobId);
+    mob.aggroTable = threatMatrix.getAggroTable(mobId);
+
+    // If mob was not in combat state, switch it to combat immediately
+    if (visual.fsm && visual.fsm.getCurrentStateId() !== 'combat' && visual.fsm.getCurrentStateId() !== 'dead') {
+      visual.fsm.setState('combat', {
+        mob,
+        visual: visual as any,
+        playerX: mob.x,
+        playerZ: mob.z,
+        delta: 0,
+        scene: this.scene,
+      });
+    }
 
     // Flash hit reaction
     (visual.bodyMesh.material as THREE.MeshStandardMaterial).emissive.setHex(0xffffff);
@@ -761,6 +843,7 @@ export class MobManager {
     if (mob.hp <= 0) {
       mob.hp = 0;
       visual.deathAnimTimer = 1.2; // trigger fade out
+      this.tetherVisualizer.removeTether(mobId);
       visual.fsm?.setState('dead', {
         mob,
         visual: visual as any,
@@ -784,6 +867,108 @@ export class MobManager {
     }
 
     return { mob, isKilled: false };
+  }
+
+  /**
+   * Applies Taunt to a specific mob, immediately setting threat higher than the top threat holder.
+   */
+  public tauntMob(mobId: string, taunterId: string = 'hero_player_1', taunterName?: string): void {
+    const visual = this.mobs.find((m) => m.entity.id === mobId);
+    if (!visual || visual.entity.hp <= 0) return;
+
+    const mob = visual.entity;
+    if (mob.fightStartX === undefined) {
+      mob.fightStartX = mob.x;
+      mob.fightStartZ = mob.z;
+      threatMatrix.recordFightStart(mobId, mob.x, mob.z);
+    }
+
+    mob.isAggroed = true;
+    threatMatrix.applyTaunt(mobId, taunterId, taunterName);
+    mob.targetId = taunterId;
+    mob.targetName = taunterName || (taunterId === 'hero_player_1' ? 'Hero Player' : taunterId);
+    mob.aggroTable = threatMatrix.getAggroTable(mobId);
+
+    if (visual.fsm && visual.fsm.getCurrentStateId() !== 'combat' && visual.fsm.getCurrentStateId() !== 'dead') {
+      visual.fsm.setState('combat', {
+        mob,
+        visual: visual as any,
+        playerX: mob.x,
+        playerZ: mob.z,
+        delta: 0,
+        scene: this.scene,
+      });
+    }
+  }
+
+  /**
+   * Applies Taunt to all nearby mobs in range.
+   */
+  public tauntNearbyMobs(
+    taunterId: string = 'hero_player_1',
+    x: number,
+    z: number,
+    radius: number = 20.0,
+    taunterName?: string
+  ): WorldMobEntity[] {
+    const affected: WorldMobEntity[] = [];
+    this.mobs.forEach((visual) => {
+      if (visual.entity.hp > 0 && Math.hypot(visual.entity.x - x, visual.entity.z - z) <= radius) {
+        this.tauntMob(visual.entity.id, taunterId, taunterName);
+        affected.push(visual.entity);
+      }
+    });
+    return affected;
+  }
+
+  /**
+   * On player death: wipes aggro from all mobs and directly returns aggroed mobs
+   * back to their fight start point on the map!
+   */
+  public handlePlayerDeath(playerId: string = 'hero_player_1'): {
+    mob: WorldMobEntity;
+    fightStartPos: { x: number; z: number };
+  }[] {
+    const affected = threatMatrix.handleEntityDeath(playerId);
+    const resetMobs: { mob: WorldMobEntity; fightStartPos: { x: number; z: number } }[] = [];
+
+    affected.forEach((item) => {
+      const visual = this.mobs.find((m) => m.entity.id === item.mobId);
+      if (visual) {
+        if (item.shouldReset) {
+          const returnPos = item.fightStartPos;
+
+          // Directly return mob to its fight start point coordinates on the map
+          visual.entity.x = returnPos.x;
+          visual.entity.z = returnPos.z;
+          visual.group.position.set(returnPos.x, 0, returnPos.z);
+          visual.entity.hp = visual.entity.maxHp;
+          visual.entity.isAggroed = false;
+          visual.entity.targetId = null;
+          visual.entity.targetName = undefined;
+          visual.entity.fightStartX = undefined;
+          visual.entity.fightStartZ = undefined;
+          visual.entity.aggroTable = {};
+
+          this.tetherVisualizer.hideTether(visual.entity.id);
+
+          if (visual.fsm) {
+            visual.fsm.setState('idle', {
+              mob: visual.entity,
+              visual: visual as any,
+              playerX: returnPos.x,
+              playerZ: returnPos.z,
+              delta: 0,
+              scene: this.scene,
+            });
+          }
+
+          resetMobs.push({ mob: visual.entity, fightStartPos: returnPos });
+        }
+      }
+    });
+
+    return resetMobs;
   }
 
   public getNearbyMobs(x: number, z: number, range: number): WorldMobEntity[] {

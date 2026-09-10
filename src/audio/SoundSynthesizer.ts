@@ -368,6 +368,99 @@ class SoundSynthesizer {
       osc.stop(st + 0.05);
     });
   }
+
+  public playComboHit(comboCount: number, isCrit: boolean = false) {
+    if (this.isMuted) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    // Rising musical frequency based on combo chain
+    const baseFreq = isCrit ? 330 : 220;
+    const semitones = Math.min(36, comboCount * 1.5);
+    const targetFreq = baseFreq * Math.pow(2, semitones / 12);
+
+    osc.type = comboCount >= 10 ? 'sawtooth' : isCrit ? 'triangle' : 'sine';
+    osc.frequency.setValueAtTime(targetFreq * 0.85, now);
+    osc.frequency.exponentialRampToValueAtTime(targetFreq, now + 0.06);
+
+    const volume = Math.min(0.28, 0.12 + comboCount * 0.005);
+    gain.gain.setValueAtTime(volume, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + (isCrit ? 0.16 : 0.12));
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + (isCrit ? 0.16 : 0.12));
+  }
+
+  public playComboMilestone(milestoneOrRank: number | string) {
+    if (this.isMuted) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    const now = this.ctx.currentTime;
+    // Aurion resonant power surge triad
+    const freqs = [523.25, 659.25, 783.99, 1046.5]; // C5, E5, G5, C6
+    freqs.forEach((f, idx) => {
+      const st = now + idx * 0.04;
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(f, st);
+      gain.gain.setValueAtTime(0.18, st);
+      gain.gain.exponentialRampToValueAtTime(0.001, st + 0.4);
+
+      osc.connect(gain);
+      gain.connect(this.ctx!.destination);
+      osc.start(st);
+      osc.stop(st + 0.4);
+    });
+  }
+
+  public playDirectionalDamageSound(angleRad?: number, isCrit: boolean = false) {
+    if (this.isMuted) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(isCrit ? 180 : 130, now);
+    osc.frequency.exponentialRampToValueAtTime(isCrit ? 25 : 35, now + (isCrit ? 0.25 : 0.18));
+
+    gain.gain.setValueAtTime(isCrit ? 0.35 : 0.22, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + (isCrit ? 0.25 : 0.18));
+
+    // Stereo panning if StereoPannerNode is supported in browser
+    if (angleRad !== undefined && typeof this.ctx.createStereoPanner === 'function') {
+      try {
+        const panner = this.ctx.createStereoPanner();
+        // angleRad: 0 is front, PI/2 is right, -PI/2 is left
+        const panValue = Math.max(-1, Math.min(1, Math.sin(angleRad)));
+        panner.pan.setValueAtTime(panValue, now);
+        osc.connect(gain);
+        gain.connect(panner);
+        panner.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + (isCrit ? 0.25 : 0.18));
+        return;
+      } catch {
+        // fallback to standard mono routing
+      }
+    }
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + (isCrit ? 0.25 : 0.18));
+  }
 }
 
 export const soundSynth = new SoundSynthesizer();

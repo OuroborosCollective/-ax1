@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { collisionSystem } from './WorldCollisionSystem';
 import { WorldChunkManager } from './WorldChunkManager';
+import { MYSTIC_FLOWER_WELLS } from '../data/mmorpgData';
 
 export class OpenWorldLandscape {
   public scene: THREE.Scene;
@@ -34,7 +35,10 @@ export class OpenWorldLandscape {
     // 5. Build Zone 4: Crystalline Void Spire & World Boss Arena (South)
     this.buildVoidSpireArena();
 
-    // 6. Ambient Environment Lighting & Skybox Stars
+    // 6. Build Mystic Flower Wells across zones
+    this.buildMysticFlowerWells();
+
+    // 7. Ambient Environment Lighting & Skybox Stars
     this.buildEnvironmentProps();
   }
 
@@ -558,6 +562,116 @@ export class OpenWorldLandscape {
     this.animatedProps.push({ mesh: ring, rotSpeed: 0.2 });
 
     this.group.add(arenaGroup);
+  }
+
+  private buildMysticFlowerWells() {
+    const wellsGroup = new THREE.Group();
+
+    const stoneMat = new THREE.MeshStandardMaterial({
+      color: 0x334155,
+      roughness: 0.75,
+      metalness: 0.2,
+    });
+    const goldTrimMat = new THREE.MeshStandardMaterial({
+      color: 0xd4af37,
+      metalness: 0.9,
+      roughness: 0.25,
+    });
+
+    MYSTIC_FLOWER_WELLS.forEach((well) => {
+      // Exclude (0,0) as hub fountain is already constructed there, but enhance its marker
+      if (well.x === 0 && well.z === 0) return;
+
+      const wellGroup = new THREE.Group();
+      const baseElev = this.chunkManager.getElevationAt(well.x, well.z);
+      wellGroup.position.set(well.x, baseElev, well.z);
+
+      // 1. Carved Octagonal Sandstone / Honey-Stone Basin Rim
+      const basinGeo = new THREE.CylinderGeometry(2.4, 2.7, 0.7, 8);
+      const basin = new THREE.Mesh(basinGeo, stoneMat);
+      basin.position.y = 0.35;
+      wellGroup.add(basin);
+
+      // Bronze / Gold Rim Band
+      const rimGeo = new THREE.TorusGeometry(2.5, 0.12, 6, 16);
+      rimGeo.rotateX(Math.PI / 2);
+      const rim = new THREE.Mesh(rimGeo, goldTrimMat);
+      rim.position.y = 0.7;
+      wellGroup.add(rim);
+
+      // 2. Glowing Aetherial Water Pool
+      const poolColor = new THREE.Color(well.color);
+      const waterMat = new THREE.MeshStandardMaterial({
+        color: poolColor,
+        emissive: poolColor,
+        emissiveIntensity: 0.85,
+        roughness: 0.15,
+        metalness: 0.6,
+      });
+      const waterGeo = new THREE.CylinderGeometry(2.1, 2.1, 0.15, 16);
+      const water = new THREE.Mesh(waterGeo, waterMat);
+      water.position.y = 0.55;
+      wellGroup.add(water);
+
+      // 3. Central Blooming Mystic Lotus Petals
+      const petalMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: poolColor,
+        emissiveIntensity: 1.2,
+        roughness: 0.3,
+        metalness: 0.2,
+      });
+
+      const flowerCluster = new THREE.Group();
+      flowerCluster.position.y = 0.7;
+
+      const petalCount = 8;
+      for (let p = 0; p < petalCount; p++) {
+        const angle = (p / petalCount) * Math.PI * 2;
+        const petalGeo = new THREE.ConeGeometry(0.28, 0.75, 5);
+        const petal = new THREE.Mesh(petalGeo, petalMat);
+        petal.position.set(Math.cos(angle) * 0.65, 0.2, Math.sin(angle) * 0.65);
+        petal.rotation.set(Math.sin(angle) * 0.6, 0, -Math.cos(angle) * 0.6);
+        flowerCluster.add(petal);
+      }
+
+      // Floating Aether Core Blossom Gem
+      const gemGeo = new THREE.OctahedronGeometry(0.45, 0);
+      const gem = new THREE.Mesh(gemGeo, petalMat);
+      gem.position.y = 0.45;
+      flowerCluster.add(gem);
+
+      wellGroup.add(flowerCluster);
+      this.animatedProps.push({ mesh: flowerCluster, rotSpeed: 0.5 });
+
+      // 4. Surrounding Wildflower Meadow ring
+      const flowerMeadowMat = new THREE.MeshStandardMaterial({
+        color: poolColor,
+        emissive: poolColor,
+        emissiveIntensity: 0.6,
+      });
+      for (let f = 0; f < 12; f++) {
+        const fa = (f / 12) * Math.PI * 2;
+        const dist = 3.2 + (f % 3) * 0.4;
+        const flowerGeo = new THREE.DodecahedronGeometry(0.18, 0);
+        const flowerMesh = new THREE.Mesh(flowerGeo, flowerMeadowMat);
+        flowerMesh.position.set(Math.cos(fa) * dist, 0.15, Math.sin(fa) * dist);
+        wellGroup.add(flowerMesh);
+      }
+
+      wellsGroup.add(wellGroup);
+
+      collisionSystem.registerObstacle({
+        id: `well_obstacle_${well.id}`,
+        type: 'fountain',
+        x: well.x,
+        z: well.z,
+        radius: 2.8,
+        name: well.germanName,
+      });
+    });
+
+    this.group.add(wellsGroup);
   }
 
   private buildEnvironmentProps() {
