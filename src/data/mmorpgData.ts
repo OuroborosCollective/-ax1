@@ -1949,6 +1949,27 @@ export const INITIAL_NPCS: NPCCharacter[] = [
       crimesWitnessed: 0,
       personalNotes: 'Knows your combat prowess and values valor against the rogue clockwork menace.',
     },
+    reactionLogic: {
+      baseAggroThreshold: -15,
+      retaliateOnAttack: true,
+      tradeAffinityMultiplier: 1.25,
+      crimeTolerance: 'low',
+      hostileThreshold: -25,
+      friendlyThreshold: 25,
+      exaltedThreshold: 75,
+      reputationChangeOnAttack: -30,
+      reputationChangeOnTrade: 10,
+      onAttackedDialogue: [
+        'Verrat an der königlichen Schmiede?! Meine Hämmer haben Titanen geformt – wage es nicht, mich herauszufordern!',
+        'Halt ein, Narr! Wer den Großschmied von Aethelgard angreift, wird aus der Stadt verbannt!',
+        'Hast du den Verstand verloren? Die Wachen werden dich für diesen Überfall in Ketten legen!'
+      ],
+      onTradeDialogue: [
+        'Ein vortrefflicher Handel! Mögen diese Zahnräder und Essenzen deine Rüstung im Felde stärken.',
+        'Wahre Handwerkskunst verlangt gerechten Tausch. Ich schätze treue Kunden an meinem Amboss!',
+        'Hervorragend! Dein Gold fließt direkt in die Verteidigungswerke von Aethelgard.'
+      ]
+    },
     x: 0,
     y: 0,
     z: -12,
@@ -2014,6 +2035,25 @@ export const INITIAL_NPCS: NPCCharacter[] = [
       crimesWitnessed: 0,
       personalNotes: 'Loves nature and clockwork hybrids. Sells companion pets that fight by your side!',
     },
+    reactionLogic: {
+      baseAggroThreshold: -10,
+      retaliateOnAttack: true,
+      tradeAffinityMultiplier: 1.5,
+      crimeTolerance: 'zero',
+      hostileThreshold: -15,
+      friendlyThreshold: 20,
+      exaltedThreshold: 60,
+      reputationChangeOnAttack: -35,
+      reputationChangeOnTrade: 12,
+      onAttackedDialogue: [
+        'Lass deine Klinge sinken! Wer meine Gefährten oder mich bedroht, spürt die Klauen des Urwalds!',
+        'Grausamkeit gegen die Natur wird hier nicht geduldet! Verschwinde aus meiner Menagerie!'
+      ],
+      onTradeDialogue: [
+        'Möge dein neuer Gefährte dich treu durch alle Stürme begleiten!',
+        'Ein wundervoller Handel für das Wohl der Geschöpfe. Ich vertraue dir meine Lieblinge an.'
+      ]
+    },
     x: 24,
     y: 0,
     z: 16,
@@ -2060,6 +2100,25 @@ export const INITIAL_NPCS: NPCCharacter[] = [
       crimesWitnessed: 0,
       personalNotes: 'Architect who designs estate blueprints for players with enough gold.',
     },
+    reactionLogic: {
+      baseAggroThreshold: -20,
+      retaliateOnAttack: false,
+      tradeAffinityMultiplier: 1.4,
+      crimeTolerance: 'low',
+      hostileThreshold: -20,
+      friendlyThreshold: 30,
+      exaltedThreshold: 70,
+      reputationChangeOnAttack: -25,
+      reputationChangeOnTrade: 15,
+      onAttackedDialogue: [
+        'Wache! Ein Randalierer im Bauviertel! Meine Blaupausen sind unersetzlich!',
+        'Gewalt löst keine Konstruktionsprobleme! Lass deine Waffen stecken!'
+      ],
+      onTradeDialogue: [
+        'Ein monumentaler Abschluss! Dein Anwesen wird die Kronjuwele des Westbezirks werden.',
+        'Ausgezeichnete Investition in Grund und Boden. Stein und Bronze überdauern Generationen!'
+      ]
+    },
     x: -22,
     y: 0,
     z: 14,
@@ -2105,6 +2164,25 @@ export const INITIAL_NPCS: NPCCharacter[] = [
       tradesCompleted: 0,
       crimesWitnessed: 0,
       personalNotes: 'Scholarly guardian of the celestial ley lines. Values magical mastery.',
+    },
+    reactionLogic: {
+      baseAggroThreshold: -25,
+      retaliateOnAttack: true,
+      tradeAffinityMultiplier: 1.3,
+      crimeTolerance: 'moderate',
+      hostileThreshold: -30,
+      friendlyThreshold: 35,
+      exaltedThreshold: 80,
+      reputationChangeOnAttack: -35,
+      reputationChangeOnTrade: 10,
+      onAttackedDialogue: [
+        'Die Ley-Ströme weisen deinen Verrat zurück! Tausend arkane Siegel brennen deine Klinge nieder!',
+        'Ein Angriff auf die Hohe Warte? Du wirst die Bürde des kosmischen Ungleichgewichts spüren!'
+      ],
+      onTradeDialogue: [
+        'Möge das arkane Wissen und diese Aether-Relikte deinen Geist erhellen.',
+        'Der Kreis der Magie dankt für deine Unterstützung. Die Spiren resonieren in Harmonie.'
+      ]
     },
     x: 42,
     y: 0,
@@ -2153,6 +2231,25 @@ export const INITIAL_NPCS: NPCCharacter[] = [
       crimesWitnessed: 0,
       personalNotes: 'Strict defender of law and order. Rewards monster slayers and detests rogue bandits.',
     },
+    reactionLogic: {
+      baseAggroThreshold: -5,
+      retaliateOnAttack: true,
+      tradeAffinityMultiplier: 1.0,
+      crimeTolerance: 'zero',
+      hostileThreshold: -15,
+      friendlyThreshold: 30,
+      exaltedThreshold: 75,
+      reputationChangeOnAttack: -40,
+      reputationChangeOnTrade: 6,
+      onAttackedDialogue: [
+        'Angriff auf die Stadtwache?! Wachen, Alarm! Dieser Verräter wird sofort festgesetzt!',
+        'Deine Klinge gegen das Reich?! Du hast gerade dein Todesurteil unterzeichnet!'
+      ],
+      onTradeDialogue: [
+        'Rüstung und Disziplin sichern den Frieden. Dein Beitrag stärkt die Garnison.',
+        'Solide Ausrüstung für einen Soldaten des Lichts. Weitermachen!'
+      ]
+    },
     x: -38,
     y: 0,
     z: -18,
@@ -2196,6 +2293,25 @@ export const INITIAL_NPCS: NPCCharacter[] = [
       crimesWitnessed: 0,
       personalNotes: 'Trades contraband relics and rare beast cores for those who dare deal with the underworld.',
     },
+    reactionLogic: {
+      baseAggroThreshold: -30,
+      retaliateOnAttack: true,
+      tradeAffinityMultiplier: 1.6,
+      crimeTolerance: 'high',
+      hostileThreshold: -35,
+      friendlyThreshold: 20,
+      exaltedThreshold: 65,
+      reputationChangeOnAttack: -20,
+      reputationChangeOnTrade: 14,
+      onAttackedDialogue: [
+        'Glaubst du, du kannst mich im Dunkeln überraschen? Meine Schattenmesser sind schneller als dein Auge!',
+        'Ein Verräter unter Gesetzlosen? Das wird dich teuer zu stehen kommen, Schnüffler!'
+      ],
+      onTradeDialogue: [
+        'Keine Fragen, kein Zoll, nur reines Gold. So mag ich das. Bis zum nächsten Coup!',
+        'Unter Freunden der Nacht hält man zusammen. Deine Verschwiegenheit zahlt sich aus.'
+      ]
+    },
     x: -45,
     y: 0,
     z: 32,
@@ -2226,6 +2342,25 @@ export const INITIAL_NPCS: NPCCharacter[] = [
       tradesCompleted: 0,
       crimesWitnessed: 0,
       personalNotes: 'Leitet die öffentlichen Auktionen und Reichsversteigerungen direkt am Starter-Platz.',
+    },
+    reactionLogic: {
+      baseAggroThreshold: -15,
+      retaliateOnAttack: false,
+      tradeAffinityMultiplier: 1.8,
+      crimeTolerance: 'zero',
+      hostileThreshold: -20,
+      friendlyThreshold: 25,
+      exaltedThreshold: 70,
+      reputationChangeOnAttack: -30,
+      reputationChangeOnTrade: 15,
+      onAttackedDialogue: [
+        'Gewalt auf dem heiligen Marktforum?! Die Gesetze des Reiches schützen jeden Händler!',
+        'Wachen zum Auktionspodium! Dieser Übeltäter bedroht das Vermögen der Krone!'
+      ],
+      onTradeDialogue: [
+        'Zum Ersten, zum Zweiten, und Verkauft! Ein glänzender Gewinn für alle Beteiligten!',
+        'Deine Handelskraft belebt die Wirtschaft von ganz Aurion. Auf viele weitere Gebote!'
+      ]
     },
     x: 16,
     y: 0,

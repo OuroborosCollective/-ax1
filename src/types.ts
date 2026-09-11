@@ -226,6 +226,7 @@ export interface ElementalSynergyEvent {
 export interface BossTelegraph {
   id: string;
   sourceMobId: string;
+  sourceName?: string;
   type: 'circle' | 'cone' | 'rectangle';
   x: number;
   y: number;
@@ -635,13 +636,62 @@ export interface SoldBuybackItem {
   soldToHubId?: string;
 }
 
+export interface NPCReactionLogic {
+  baseAggroThreshold?: number; // Rep below this threshold triggers defensive/hostile behavior
+  retaliateOnAttack?: boolean; // Whether NPC will draw weapon / alert guards when struck
+  tradeAffinityMultiplier?: number; // Multiplier for reputation gain during commerce
+  crimeTolerance?: 'zero' | 'low' | 'moderate' | 'high'; // Tolerance to rogue actions
+  hostileThreshold?: number; // e.g. < -20 triggers hostile dialogue & hostility
+  friendlyThreshold?: number; // e.g. > 30 triggers friendly perks & discounts
+  exaltedThreshold?: number; // e.g. > 70 triggers heroic acknowledgement
+  onAttackedDialogue?: string[]; // Dynamic dialogue lines injected when attacked
+  onTradeDialogue?: string[]; // Dynamic dialogue lines injected on successful trades
+  onCrimeWitnessedDialogue?: string[]; // Dialogue when observing player theft or crimes
+  reputationChangeOnAttack?: number; // Custom rep penalty (default -25)
+  reputationChangeOnTrade?: number; // Custom rep bonus (default +8)
+  onEvent?: (
+    event: 'attack' | 'trade' | 'crime' | 'chat',
+    npc: NPCCharacter,
+    details?: { amount?: number; itemName?: string; damage?: number; isHostile?: boolean }
+  ) => void;
+}
+
+export interface NPCInteractionFrequency {
+  totalInteractions: number;
+  lastInteractionTimestamp: number;
+  interactionIntervalsAvgMs: number;
+  velocityCategory: 'frequent' | 'occasional' | 'rare' | 'first_contact';
+  friendlyStreak: number;
+  aggressiveStreak: number;
+}
+
+export interface NPCEmotionalContext {
+  friendlyScore: number;
+  aggressiveScore: number;
+  dominantTone: 'friendly' | 'aggressive' | 'neutral';
+  lastEmote?: string;
+}
+
+export type NPCDefensivePosture = 'PEACEFUL' | 'GUARDED' | 'DEFENSIVE' | 'HOSTILE_STANCE' | 'HEROIC_SALUTE';
+
 export interface NPCRelationshipMemory {
   reputation: number; // -100 (Hostile / Criminal) to +100 (Exalted Hero)
+  affectionRating?: number; // -100 (Bitter / Enemy) to +100 (Adored / Heroic)
   timesInteracted: number;
   tradesCompleted: number;
   crimesWitnessed: number;
+  attacksSuffered?: number;
+  totalGoldTraded?: number;
+  lastEvent?: 'attack' | 'trade' | 'crime' | 'chat' | 'quest';
+  lastEventTimestamp?: number;
   lastConversationTimestamp?: string;
   personalNotes?: string;
+  dynamicDialogueHistory?: string[];
+  customFlags?: Record<string, string | number | boolean>;
+  interactionFrequency?: NPCInteractionFrequency;
+  emotionalContext?: NPCEmotionalContext;
+  defensivePosture?: NPCDefensivePosture;
+  activeDiscountPercent?: number; // negative number is discount (e.g. -20%), positive is markup (e.g. +30%)
 }
 
 export interface NPCCharacter {
@@ -661,6 +711,12 @@ export interface NPCCharacter {
   familyMembers?: string[];
   mood?: 'ecstatic' | 'friendly' | 'neutral' | 'suspicious' | 'hostile';
   memory?: NPCRelationshipMemory;
+  reactionLogic?: NPCReactionLogic;
+  affectionRating?: number; // -100 to +100
+  interactionFrequency?: NPCInteractionFrequency;
+  emotionalContext?: NPCEmotionalContext;
+  defensivePosture?: NPCDefensivePosture;
+  activeDiscountPercent?: number;
   sellPets?: CompanionPet[];
   houseBlueprints?: HomesteadBlueprint[];
   fsmState?: NPCFsmState;

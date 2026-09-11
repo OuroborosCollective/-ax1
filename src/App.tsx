@@ -26,6 +26,8 @@ import {
   ProfessionSkill,
   ComboState,
   DirectionalDamageIndicator,
+  DPSMeterStats,
+  CombatLogEntry,
 } from './types';
 import { GameHUD } from './components/GameHUD';
 import { InventoryModal } from './components/InventoryModal';
@@ -97,6 +99,8 @@ export default function App() {
   const [inventory, setInventory] = useState<RPGItem[]>([]);
   const [comboState, setComboState] = useState<ComboState | null>(null);
   const [directionalIndicators, setDirectionalIndicators] = useState<DirectionalDamageIndicator[]>([]);
+  const [dpsMeterStats, setDpsMeterStats] = useState<DPSMeterStats | undefined>(undefined);
+  const [combatLogs, setCombatLogs] = useState<CombatLogEntry[]>([]);
 
   // Modals States
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
@@ -180,6 +184,8 @@ export default function App() {
         if (state.npcs) setNpcs([...state.npcs]);
         if (state.comboState) setComboState({ ...state.comboState });
         if (state.directionalIndicators) setDirectionalIndicators([...state.directionalIndicators]);
+        if (state.dpsMeterStats) setDpsMeterStats({ ...state.dpsMeterStats });
+        if (state.combatLogs) setCombatLogs([...state.combatLogs]);
       };
 
 
@@ -438,8 +444,27 @@ export default function App() {
       engineRef.current.player.stats.gold -= item.valueGold;
       engineRef.current.player.inventory.push(item);
       engineRef.current.addChatMessage('system', 'Merchant', `Purchased [${item.name}] for ${item.valueGold} Gold.`);
+
+      if (activeNPC) {
+        engineRef.current.processNPCEvent(activeNPC.id, 'trade', {
+          goldAmount: item.valueGold,
+          itemName: item.name,
+        });
+        const updated = engineRef.current.npcs.find((n) => n.id === activeNPC.id);
+        if (updated) setActiveNPC({ ...updated });
+      }
     }
-  }, []);
+  }, [activeNPC]);
+
+  const handleTriggerNPCEvent = useCallback(
+    (eventType: 'attack' | 'trade' | 'crime' | 'chat', eventData?: any) => {
+      if (!engineRef.current || !activeNPC) return;
+      engineRef.current.processNPCEvent(activeNPC.id, eventType, eventData);
+      const updated = engineRef.current.npcs.find((n) => n.id === activeNPC.id);
+      if (updated) setActiveNPC({ ...updated });
+    },
+    [activeNPC]
+  );
 
   const handleCraftSuccess = useCallback(
     (
@@ -622,7 +647,7 @@ export default function App() {
       return;
     }
 
-    engineRef.current.addChatMessage(channel, 'Hero', text, true);
+    engineRef.current.sendPlayerChat(text, channel);
   }, []);
 
   return (
@@ -716,6 +741,9 @@ export default function App() {
           pityCounters={pityCounters}
           comboState={comboState || undefined}
           directionalIndicators={directionalIndicators}
+          dpsMeterStats={dpsMeterStats}
+          combatLogs={combatLogs}
+          onTriggerDodge={() => engineRef.current?.triggerPlayerDodge()}
           onSendMessage={handleSendMessage}
         />
       </ErrorBoundary>
@@ -822,6 +850,7 @@ export default function App() {
           genkitAdapter={engineRef.current?.genkitAdapter}
           onAcceptQuest={handleAcceptQuest}
           onBuyItem={handleBuyItem}
+          onTriggerEvent={handleTriggerNPCEvent}
         />
       </ErrorBoundary>
 
@@ -941,6 +970,7 @@ export default function App() {
           isOpen={isDeterminismOverlayOpen}
           onClose={() => setIsDeterminismOverlayOpen(false)}
           economy={engineRef.current?.npcEconomy || null}
+          onTriggerZoneTransition={() => engineRef.current?.triggerDeterministicZoneTransition()}
           onTogglePathfindingDebug={() => {
             if (engineRef.current) {
               const active = engineRef.current.togglePathfindingDebug();

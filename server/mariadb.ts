@@ -44,6 +44,10 @@ class InMemoryStore {
   chunkPolitics: Map<string, any> = new Map();
   guilds: Map<string, any> = new Map();
   logs: any[] = [];
+  linguaLearnedWords: Map<string, any> = new Map();
+  linguaEventTrainings: any[] = [];
+  npcMemories: Map<string, any> = new Map();
+  npcEventHistory: any[] = [];
 }
 
 class MariaDBService {
@@ -366,6 +370,77 @@ class MariaDBService {
         \`guild_data_json\` LONGTEXT NOT NULL,
         \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX \`idx_guild_name\` (\`guild_name\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+      // 12. Global Lingua Learned Words Vocabulary Dataset
+      `CREATE TABLE IF NOT EXISTS \`aurion_lingua_learned_words\` (
+        \`word\` VARCHAR(64) NOT NULL PRIMARY KEY,
+        \`total_occurrences\` INT NOT NULL DEFAULT 1,
+        \`event_counts_json\` JSON NOT NULL,
+        \`threat_score\` INT NOT NULL DEFAULT 0,
+        \`commerce_score\` INT NOT NULL DEFAULT 0,
+        \`last_observed_tick\` INT NOT NULL DEFAULT 0,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_word_threat\` (\`threat_score\`),
+        INDEX \`idx_word_commerce\` (\`commerce_score\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+      // 13. Global Word & Event Combination Training Logs
+      `CREATE TABLE IF NOT EXISTS \`aurion_lingua_event_training\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+        \`event_type\` VARCHAR(64) NOT NULL,
+        \`utterance_text\` TEXT NOT NULL,
+        \`tokens_json\` JSON NOT NULL,
+        \`threat_delta\` INT NOT NULL DEFAULT 0,
+        \`commerce_delta\` INT NOT NULL DEFAULT 0,
+        \`npc_id\` VARCHAR(64) DEFAULT NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX \`idx_evt_type\` (\`event_type\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+      // 14. NPC Memory Store (Per-Player & Per-NPC Affection, Reputation, and Emotional Context)
+      `CREATE TABLE IF NOT EXISTS \`aurion_npc_memories\` (
+        \`id\` VARCHAR(128) NOT NULL PRIMARY KEY,
+        \`player_id\` VARCHAR(64) NOT NULL,
+        \`npc_id\` VARCHAR(64) NOT NULL,
+        \`reputation\` INT NOT NULL DEFAULT 0,
+        \`affection_rating\` INT NOT NULL DEFAULT 0,
+        \`defensive_posture\` VARCHAR(32) NOT NULL DEFAULT 'GUARDED',
+        \`active_discount_percent\` INT NOT NULL DEFAULT 0,
+        \`mood\` VARCHAR(32) NOT NULL DEFAULT 'neutral',
+        \`times_interacted\` INT NOT NULL DEFAULT 0,
+        \`trades_completed\` INT NOT NULL DEFAULT 0,
+        \`attacks_suffered\` INT NOT NULL DEFAULT 0,
+        \`crimes_witnessed\` INT NOT NULL DEFAULT 0,
+        \`total_gold_traded\` INT NOT NULL DEFAULT 0,
+        \`interaction_frequency_json\` JSON NOT NULL,
+        \`emotional_context_json\` JSON NOT NULL,
+        \`dynamic_dialogue_history_json\` JSON NOT NULL,
+        \`last_event\` VARCHAR(32) DEFAULT NULL,
+        \`last_event_timestamp\` BIGINT DEFAULT NULL,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX \`idx_p_npc\` (\`player_id\`, \`npc_id\`),
+        INDEX \`idx_affection\` (\`affection_rating\`),
+        INDEX \`idx_reputation\` (\`reputation\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+      // 15. NPC Interaction Event History
+      `CREATE TABLE IF NOT EXISTS \`aurion_npc_event_history\` (
+        \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+        \`player_id\` VARCHAR(64) NOT NULL,
+        \`npc_id\` VARCHAR(64) NOT NULL,
+        \`event_type\` VARCHAR(32) NOT NULL,
+        \`reputation_delta\` INT NOT NULL DEFAULT 0,
+        \`affection_delta\` INT NOT NULL DEFAULT 0,
+        \`gold_amount\` INT NOT NULL DEFAULT 0,
+        \`damage_amount\` INT NOT NULL DEFAULT 0,
+        \`item_name\` VARCHAR(128) DEFAULT NULL,
+        \`utterance_text\` TEXT DEFAULT NULL,
+        \`event_details_json\` JSON DEFAULT NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX \`idx_evt_p_npc\` (\`player_id\`, \`npc_id\`),
+        INDEX \`idx_evt_type\` (\`event_type\`),
+        INDEX \`idx_evt_time\` (\`created_at\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
     ];
 
@@ -1247,6 +1322,349 @@ class MariaDBService {
       mergedChunks: chunkKeys,
       message: `Erfolgreich! ${chunkKeys.length} Gebiete (${totalAreaSqMeters.toLocaleString()} m²) wurden zum vereinten Königreich '${kingdomName}' unter der Gildenleitung zusammengeschlossen.`,
     };
+  }
+
+  // --- Persistent Word Learning & Event Training Operations ---
+  public async saveLearnedWordsBulk(learnedWords: any[], trainingEvent?: any): Promise<{ success: boolean; count: number }> {
+    if (this.isConnected && this.pool) {
+      try {
+        for (const record of learnedWords) {
+          if (!record.word) continue;
+          const sql = `
+            INSERT INTO \`aurion_lingua_learned_words\` (
+              \`word\`, \`total_occurrences\`, \`event_counts_json\`, \`threat_score\`, \`commerce_score\`, \`last_observed_tick\`
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              \`total_occurrences\` = VALUES(\`total_occurrences\`),
+              \`event_counts_json\` = VALUES(\`event_counts_json\`),
+              \`threat_score\` = VALUES(\`threat_score\`),
+              \`commerce_score\` = VALUES(\`commerce_score\`),
+              \`last_observed_tick\` = VALUES(\`last_observed_tick\`)
+          `;
+          await this.pool.query(sql, [
+            record.word.toLowerCase().trim(),
+            record.totalOccurrences || 1,
+            JSON.stringify(record.eventCounts || {}),
+            record.threatScore || 0,
+            record.commerceScore || 0,
+            record.lastObservedTick || 0,
+          ]);
+        }
+
+        if (trainingEvent) {
+          const evtSql = `
+            INSERT INTO \`aurion_lingua_event_training\` (
+              \`event_type\`, \`utterance_text\`, \`tokens_json\`, \`threat_delta\`, \`commerce_delta\`, \`npc_id\`
+            ) VALUES (?, ?, ?, ?, ?, ?)
+          `;
+          await this.pool.query(evtSql, [
+            trainingEvent.eventType || 'QUEST_LORE',
+            trainingEvent.utteranceText || '',
+            JSON.stringify(trainingEvent.combinedTokens || []),
+            trainingEvent.threatDelta || 0,
+            trainingEvent.commerceDelta || 0,
+            trainingEvent.npcId || null,
+          ]);
+        }
+      } catch (err) {
+        console.warn('[MariaDB] Error saving learned words bulk:', err);
+      }
+    }
+
+    // Always update in-memory fallback store
+    for (const record of learnedWords) {
+      if (record.word) {
+        this.inMemory.linguaLearnedWords.set(record.word.toLowerCase().trim(), record);
+      }
+    }
+    if (trainingEvent) {
+      this.inMemory.linguaEventTrainings.push(trainingEvent);
+    }
+
+    return { success: true, count: learnedWords.length };
+  }
+
+  public async getLearnedWordsDataset(): Promise<any[]> {
+    if (this.isConnected && this.pool) {
+      try {
+        const [rows] = await this.pool.query<any[]>('SELECT * FROM `aurion_lingua_learned_words` ORDER BY `total_occurrences` DESC');
+        return rows.map((r) => ({
+          word: r.word,
+          totalOccurrences: r.total_occurrences,
+          eventCounts: typeof r.event_counts_json === 'string' ? JSON.parse(r.event_counts_json) : (r.event_counts_json || {}),
+          threatScore: r.threat_score,
+          commerceScore: r.commerce_score,
+          lastObservedTick: r.last_observed_tick,
+        }));
+      } catch (err) {
+        console.warn('[MariaDB] Error querying learned words:', err);
+      }
+    }
+
+    return Array.from(this.inMemory.linguaLearnedWords.values());
+  }
+
+  // --- Persistent NPC Memory & Event History Operations ---
+  public async saveNPCMemory(
+    playerId: string,
+    npcId: string,
+    memoryData: any,
+    eventLogData?: any
+  ): Promise<{ success: boolean; memoryId: string }> {
+    const compositeId = `${playerId}_${npcId}`;
+    const now = Date.now();
+
+    const reputation = memoryData.reputation ?? 0;
+    const affectionRating = memoryData.affectionRating ?? 0;
+    const posture = memoryData.defensivePosture || memoryData.posture || 'GUARDED';
+    const activeDiscount = memoryData.activeDiscountPercent ?? 0;
+    const mood = memoryData.mood || 'neutral';
+    const timesInteracted = memoryData.timesInteracted ?? 0;
+    const tradesCompleted = memoryData.tradesCompleted ?? 0;
+    const attacksSuffered = memoryData.attacksSuffered ?? 0;
+    const crimesWitnessed = memoryData.crimesWitnessed ?? 0;
+    const totalGoldTraded = memoryData.totalGoldTraded ?? 0;
+    const interactionFreq = JSON.stringify(memoryData.interactionFrequency || {});
+    const emotionalContext = JSON.stringify(memoryData.emotionalContext || {});
+    const dynamicDialogueHistory = JSON.stringify(memoryData.dynamicDialogueHistory || []);
+    const lastEvent = memoryData.lastEvent || null;
+    const lastEventTimestamp = memoryData.lastEventTimestamp || now;
+
+    if (this.isConnected && this.pool) {
+      try {
+        const sql = `
+          INSERT INTO \`aurion_npc_memories\` (
+            \`id\`, \`player_id\`, \`npc_id\`, \`reputation\`, \`affection_rating\`,
+            \`defensive_posture\`, \`active_discount_percent\`, \`mood\`, \`times_interacted\`,
+            \`trades_completed\`, \`attacks_suffered\`, \`crimes_witnessed\`, \`total_gold_traded\`,
+            \`interaction_frequency_json\`, \`emotional_context_json\`, \`dynamic_dialogue_history_json\`,
+            \`last_event\`, \`last_event_timestamp\`
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            \`reputation\` = VALUES(\`reputation\`),
+            \`affection_rating\` = VALUES(\`affection_rating\`),
+            \`defensive_posture\` = VALUES(\`defensive_posture\`),
+            \`active_discount_percent\` = VALUES(\`active_discount_percent\`),
+            \`mood\` = VALUES(\`mood\`),
+            \`times_interacted\` = VALUES(\`times_interacted\`),
+            \`trades_completed\` = VALUES(\`trades_completed\`),
+            \`attacks_suffered\` = VALUES(\`attacks_suffered\`),
+            \`crimes_witnessed\` = VALUES(\`crimes_witnessed\`),
+            \`total_gold_traded\` = VALUES(\`total_gold_traded\`),
+            \`interaction_frequency_json\` = VALUES(\`interaction_frequency_json\`),
+            \`emotional_context_json\` = VALUES(\`emotional_context_json\`),
+            \`dynamic_dialogue_history_json\` = VALUES(\`dynamic_dialogue_history_json\`),
+            \`last_event\` = VALUES(\`last_event\`),
+            \`last_event_timestamp\` = VALUES(\`last_event_timestamp\`)
+        `;
+        await this.pool.query(sql, [
+          compositeId,
+          playerId,
+          npcId,
+          reputation,
+          affectionRating,
+          posture,
+          activeDiscount,
+          mood,
+          timesInteracted,
+          tradesCompleted,
+          attacksSuffered,
+          crimesWitnessed,
+          totalGoldTraded,
+          interactionFreq,
+          emotionalContext,
+          dynamicDialogueHistory,
+          lastEvent,
+          lastEventTimestamp,
+        ]);
+
+        if (eventLogData) {
+          const evtSql = `
+            INSERT INTO \`aurion_npc_event_history\` (
+              \`player_id\`, \`npc_id\`, \`event_type\`, \`reputation_delta\`, \`affection_delta\`,
+              \`gold_amount\`, \`damage_amount\`, \`item_name\`, \`utterance_text\`, \`event_details_json\`
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `;
+          await this.pool.query(evtSql, [
+            playerId,
+            npcId,
+            eventLogData.eventType || 'chat',
+            eventLogData.reputationDelta || 0,
+            eventLogData.affectionDelta || 0,
+            eventLogData.goldAmount || 0,
+            eventLogData.damage || 0,
+            eventLogData.itemName || null,
+            eventLogData.utteranceText || null,
+            JSON.stringify(eventLogData.details || {}),
+          ]);
+        }
+      } catch (err) {
+        console.warn('[MariaDB] Error saving NPC memory:', err);
+      }
+    }
+
+    // Always keep in-memory fallback updated
+    const memoryRecord = {
+      compositeId,
+      playerId,
+      npcId,
+      reputation,
+      affectionRating,
+      defensivePosture: posture,
+      activeDiscountPercent: activeDiscount,
+      mood,
+      timesInteracted,
+      tradesCompleted,
+      attacksSuffered,
+      crimesWitnessed,
+      totalGoldTraded,
+      interactionFrequency: memoryData.interactionFrequency || {},
+      emotionalContext: memoryData.emotionalContext || {},
+      dynamicDialogueHistory: memoryData.dynamicDialogueHistory || [],
+      lastEvent,
+      lastEventTimestamp,
+      updatedAt: new Date().toISOString(),
+    };
+    this.inMemory.npcMemories.set(compositeId, memoryRecord);
+
+    if (eventLogData) {
+      this.inMemory.npcEventHistory.push({
+        id: this.inMemory.npcEventHistory.length + 1,
+        playerId,
+        npcId,
+        ...eventLogData,
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    return { success: true, memoryId: compositeId };
+  }
+
+  public async loadNPCMemory(playerId: string, npcId: string): Promise<any | null> {
+    const compositeId = `${playerId}_${npcId}`;
+    if (this.isConnected && this.pool) {
+      try {
+        const [rows] = await this.pool.query<any[]>(
+          'SELECT * FROM `aurion_npc_memories` WHERE `id` = ? LIMIT 1',
+          [compositeId]
+        );
+        if (rows.length > 0) {
+          const r = rows[0];
+          return {
+            playerId: r.player_id,
+            npcId: r.npc_id,
+            reputation: r.reputation,
+            affectionRating: r.affection_rating,
+            defensivePosture: r.defensive_posture,
+            activeDiscountPercent: r.active_discount_percent,
+            mood: r.mood,
+            timesInteracted: r.times_interacted,
+            tradesCompleted: r.trades_completed,
+            attacksSuffered: r.attacks_suffered,
+            crimesWitnessed: r.crimes_witnessed,
+            totalGoldTraded: r.total_gold_traded,
+            interactionFrequency: typeof r.interaction_frequency_json === 'string'
+              ? JSON.parse(r.interaction_frequency_json)
+              : r.interaction_frequency_json || {},
+            emotionalContext: typeof r.emotional_context_json === 'string'
+              ? JSON.parse(r.emotional_context_json)
+              : r.emotional_context_json || {},
+            dynamicDialogueHistory: typeof r.dynamic_dialogue_history_json === 'string'
+              ? JSON.parse(r.dynamic_dialogue_history_json)
+              : r.dynamic_dialogue_history_json || [],
+            lastEvent: r.last_event,
+            lastEventTimestamp: r.last_event_timestamp,
+          };
+        }
+      } catch (err) {
+        console.warn('[MariaDB] Error loading NPC memory:', err);
+      }
+    }
+
+    return this.inMemory.npcMemories.get(compositeId) || null;
+  }
+
+  public async loadAllNPCMemoriesForPlayer(playerId: string): Promise<any[]> {
+    if (this.isConnected && this.pool) {
+      try {
+        const [rows] = await this.pool.query<any[]>(
+          'SELECT * FROM `aurion_npc_memories` WHERE `player_id` = ?',
+          [playerId]
+        );
+        return rows.map((r) => ({
+          playerId: r.player_id,
+          npcId: r.npc_id,
+          reputation: r.reputation,
+          affectionRating: r.affection_rating,
+          defensivePosture: r.defensive_posture,
+          activeDiscountPercent: r.active_discount_percent,
+          mood: r.mood,
+          timesInteracted: r.times_interacted,
+          tradesCompleted: r.trades_completed,
+          attacksSuffered: r.attacks_suffered,
+          crimesWitnessed: r.crimes_witnessed,
+          totalGoldTraded: r.total_gold_traded,
+          interactionFrequency: typeof r.interaction_frequency_json === 'string'
+            ? JSON.parse(r.interaction_frequency_json)
+            : r.interaction_frequency_json || {},
+          emotionalContext: typeof r.emotional_context_json === 'string'
+            ? JSON.parse(r.emotional_context_json)
+            : r.emotional_context_json || {},
+          dynamicDialogueHistory: typeof r.dynamic_dialogue_history_json === 'string'
+            ? JSON.parse(r.dynamic_dialogue_history_json)
+            : r.dynamic_dialogue_history_json || [],
+          lastEvent: r.last_event,
+          lastEventTimestamp: r.last_event_timestamp,
+        }));
+      } catch (err) {
+        console.warn('[MariaDB] Error loading player NPC memories:', err);
+      }
+    }
+
+    const memories: any[] = [];
+    for (const [key, mem] of this.inMemory.npcMemories.entries()) {
+      if (key.startsWith(`${playerId}_`)) {
+        memories.push(mem);
+      }
+    }
+    return memories;
+  }
+
+  public async getNPCEventHistory(playerId: string, npcId?: string): Promise<any[]> {
+    if (this.isConnected && this.pool) {
+      try {
+        let sql = 'SELECT * FROM `aurion_npc_event_history` WHERE `player_id` = ?';
+        const params: any[] = [playerId];
+        if (npcId) {
+          sql += ' AND `npc_id` = ?';
+          params.push(npcId);
+        }
+        sql += ' ORDER BY `created_at` DESC LIMIT 50';
+        const [rows] = await this.pool.query<any[]>(sql, params);
+        return rows.map((r) => ({
+          id: r.id,
+          playerId: r.player_id,
+          npcId: r.npc_id,
+          eventType: r.event_type,
+          reputationDelta: r.reputation_delta,
+          affectionDelta: r.affection_delta,
+          goldAmount: r.gold_amount,
+          damageAmount: r.damage_amount,
+          itemName: r.item_name,
+          utteranceText: r.utterance_text,
+          eventDetails: typeof r.event_details_json === 'string'
+            ? JSON.parse(r.event_details_json)
+            : r.event_details_json || {},
+          createdAt: r.created_at,
+        }));
+      } catch (err) {
+        console.warn('[MariaDB] Error fetching NPC event history:', err);
+      }
+    }
+
+    return this.inMemory.npcEventHistory.filter(
+      (e) => e.playerId === playerId && (!npcId || e.npcId === npcId)
+    );
   }
 
   public async getStatus(): Promise<MariaDBStatus> {

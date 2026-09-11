@@ -139,6 +139,87 @@ async function startServer() {
     }
   });
 
+  // --- Global Persistent Lingua Word Learning & Event Dataset Endpoints ---
+  app.get('/api/lingua/learned-words', async (req, res) => {
+    try {
+      const words = await mariaDB.getLearnedWordsDataset();
+      res.json({ success: true, count: words.length, learnedWords: words });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message, learnedWords: [] });
+    }
+  });
+
+  app.post('/api/lingua/learn-event', async (req, res) => {
+    try {
+      const { payload, learnedProfiles } = req.body || {};
+      const profilesArray = Array.isArray(learnedProfiles) ? learnedProfiles : [];
+      const result = await mariaDB.saveLearnedWordsBulk(profilesArray, payload);
+      res.json({ success: true, savedCount: result.count, timestamp: new Date().toISOString() });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/lingua/sync-learned-words', async (req, res) => {
+    try {
+      const { learnedWords } = req.body || {};
+      const profilesArray = Array.isArray(learnedWords) ? learnedWords : [];
+      const result = await mariaDB.saveLearnedWordsBulk(profilesArray);
+      res.json({ success: true, syncedCount: result.count, timestamp: new Date().toISOString() });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // --- Per-Player & Per-NPC Persistent Memory & Event History Endpoints ---
+  app.post('/api/npc-memory/save', async (req, res) => {
+    try {
+      const { playerId = 'hero_player_1', npcId, memory, eventLog } = req.body || {};
+      if (!npcId || !memory) {
+        return res.status(400).json({ success: false, error: 'npcId and memory payload required' });
+      }
+      const result = await mariaDB.saveNPCMemory(playerId, npcId, memory, eventLog);
+      res.json({ success: true, memoryId: result.memoryId, timestamp: new Date().toISOString() });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/npc-memory/load', async (req, res) => {
+    try {
+      const playerId = (req.query.playerId as string) || 'hero_player_1';
+      const npcId = req.query.npcId as string;
+      if (!npcId) {
+        return res.status(400).json({ success: false, error: 'npcId parameter required' });
+      }
+      const memory = await mariaDB.loadNPCMemory(playerId, npcId);
+      res.json({ success: true, memory });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/npc-memory/player-memories', async (req, res) => {
+    try {
+      const playerId = (req.query.playerId as string) || 'hero_player_1';
+      const memories = await mariaDB.loadAllNPCMemoriesForPlayer(playerId);
+      res.json({ success: true, count: memories.length, memories });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/npc-memory/event-history', async (req, res) => {
+    try {
+      const playerId = (req.query.playerId as string) || 'hero_player_1';
+      const npcId = req.query.npcId as string | undefined;
+      const history = await mariaDB.getNPCEventHistory(playerId, npcId);
+      res.json({ success: true, count: history.length, history });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.get('/api/player/load', async (req, res) => {
     try {
       const playerId = (req.query.id as string) || 'hero_player_1';

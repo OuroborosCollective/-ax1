@@ -51,8 +51,11 @@ import {
   ComboState,
   DirectionalDamageIndicator,
   WeaponType,
+  DPSMeterStats,
+  CombatLogEntry,
 } from '../types';
 import { MMORPG_CLASSES } from '../data/mmorpgData';
+import { MOB_ELEMENTAL_AFFINITIES } from '../data/combatProgressionData';
 import { soundSynth } from '../audio/SoundSynthesizer';
 import { VirtualJoystick } from './VirtualJoystick';
 import { MiniMap } from './MiniMap';
@@ -77,6 +80,9 @@ interface GameHUDProps {
   npcs?: NPCCharacter[];
   comboState?: ComboState;
   directionalIndicators?: DirectionalDamageIndicator[];
+  dpsMeterStats?: DPSMeterStats;
+  combatLogs?: CombatLogEntry[];
+  onTriggerDodge?: () => void;
   onCastSkill: (skillIndex: number) => void;
   onCycleTarget?: () => void;
   onVirtualMove?: (forward: number, right: number) => void;
@@ -125,6 +131,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   autoLootEnabled = true,
   onToggleAutoLoot,
   pityCounters = {},
+  dpsMeterStats,
+  combatLogs = [],
+  onTriggerDodge,
   onCastSkill,
   onCycleTarget,
   onVirtualMove,
@@ -154,6 +163,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const [isChatExpanded, setIsChatExpanded] = useState(false);
   const [isMobileDevice, setIsMobileDevice] = useState(false);
   const [isAndroid, setIsAndroid] = useState(false);
+  const [isDpsMeterOpen, setIsDpsMeterOpen] = useState(false);
 
 
   useEffect(() => {
@@ -548,6 +558,18 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 )}
               </div>
 
+              {/* Elemental Affinities & Vulnerability Badges */}
+              {MOB_ELEMENTAL_AFFINITIES[targetMob.name] && (
+                <div className="flex items-center gap-1.5 text-[8px] font-mono pt-0.5">
+                  <span className="text-emerald-400 bg-emerald-950/70 px-1 py-0.2 rounded border border-emerald-700/60 font-semibold truncate">
+                    Weak: {MOB_ELEMENTAL_AFFINITIES[targetMob.name].vulnerabilityLabel}
+                  </span>
+                  <span className="text-amber-400/80 bg-stone-900/80 px-1 py-0.2 rounded border border-stone-700/60 truncate">
+                    Res: {MOB_ELEMENTAL_AFFINITIES[targetMob.name].resistanceLabel}
+                  </span>
+                </div>
+              )}
+
               {/* Boss Cast Bar */}
               {targetMob.isBoss && targetMob.castSkillName && (
                 <div className="relative w-full h-2 bg-black/90 rounded border border-purple-900 overflow-hidden">
@@ -678,6 +700,22 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#00f0ff] shadow-[0_0_6px_#00f0ff]" />
               </button>
             )}
+
+            {/* DPS Meter & Combat Performance Toggle */}
+            <button
+              onClick={() => setIsDpsMeterOpen((prev) => !prev)}
+              className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl border flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative ${
+                isDpsMeterOpen
+                  ? 'bg-amber-950/90 border-amber-400 text-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.4)]'
+                  : 'bg-black/80 border-gray-800 hover:border-amber-500 text-amber-400'
+              }`}
+              title="Toggle DPS Meter & Combat Performance"
+            >
+              <Swords className="w-4 h-4" />
+              {dpsMeterStats?.inCombat && (
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 animate-ping" />
+              )}
+            </button>
 
             {onToggleAutoLoot && (
               <button
@@ -1165,11 +1203,21 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               <span className="text-[7px] text-cyan-300">MOUNT</span>
             </button>
 
-            {/* Dodge / Defensive Skill 3 */}
+            {/* Evasive Dodge Roll [Space / Shift] */}
+            <button
+              onClick={onTriggerDodge}
+              className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-cyan-950/90 border border-[#00f0ff]/70 text-[#00f0ff] flex flex-col items-center justify-center text-[9px] font-mono font-bold backdrop-blur-md shadow-[0_0_12px_rgba(0,240,255,0.3)] active:scale-90 transition-transform cursor-pointer"
+              title="Evasive Dodge Roll [Space / Shift] (I-Frames)"
+            >
+              <Zap className="w-4 h-4 text-[#00f0ff]" />
+              <span className="text-[7px]">DODGE</span>
+            </button>
+
+            {/* Defensive Skill 3 */}
             <button
               onClick={() => onCastSkill(2)}
               className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-black/85 border border-purple-500/70 text-purple-300 flex flex-col items-center justify-center text-[9px] font-mono font-bold backdrop-blur-md shadow-lg active:scale-90 transition-transform cursor-pointer"
-              title="Dodge / Shield"
+              title="Defensive Skill / Shield"
             >
               <Shield className="w-4 h-4 text-purple-400" />
               <span className="text-[7px]">SHIELD</span>
@@ -1228,6 +1276,98 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Real-Time Combat Performance & DPS Meter Overlay */}
+      {isDpsMeterOpen && (
+        <div
+          id="dps-meter-modal"
+          className="fixed top-16 sm:top-20 right-4 z-40 w-80 sm:w-96 max-w-[calc(100vw-32px)] bg-black/92 border border-amber-500/40 rounded-2xl p-3.5 sm:p-4 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-150 text-white font-mono"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between pb-2 border-b border-gray-800">
+            <div className="flex items-center gap-2">
+              <Swords className="w-4 h-4 text-amber-400" />
+              <span className="text-xs font-bold text-amber-200 tracking-wider">COMBAT METRICS & DPS</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span
+                className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                  dpsMeterStats?.inCombat
+                    ? 'bg-red-950/80 text-red-300 border-red-500 animate-pulse'
+                    : 'bg-stone-900 text-gray-400 border-stone-700'
+                }`}
+              >
+                {dpsMeterStats?.inCombat ? '🔴 IN COMBAT' : '⚪ OUT OF COMBAT'}
+              </span>
+              <button
+                onClick={() => setIsDpsMeterOpen(false)}
+                className="text-gray-400 hover:text-white text-xs px-1.5 py-0.5 rounded hover:bg-gray-800 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          {/* Key Metrics Grid */}
+          <div className="grid grid-cols-3 gap-2 py-3">
+            <div className="bg-stone-950/80 border border-amber-500/30 rounded-xl p-2 text-center">
+              <div className="text-[9px] text-gray-400">CURRENT DPS</div>
+              <div className="text-base sm:text-lg font-bold text-amber-300">
+                {dpsMeterStats?.currentDps ?? 0}
+              </div>
+              <div className="text-[7.5px] text-amber-500/80">Peak: {dpsMeterStats?.peakDps ?? 0}</div>
+            </div>
+
+            <div className="bg-stone-950/80 border border-red-500/30 rounded-xl p-2 text-center">
+              <div className="text-[9px] text-gray-400">DTPS (TAKEN)</div>
+              <div className="text-base sm:text-lg font-bold text-red-400">
+                {dpsMeterStats?.currentDtps ?? 0}
+              </div>
+              <div className="text-[7.5px] text-red-500/80">Total: {dpsMeterStats?.totalDamageTaken ?? 0}</div>
+            </div>
+
+            <div className="bg-stone-950/80 border border-cyan-500/30 rounded-xl p-2 text-center">
+              <div className="text-[9px] text-gray-400">CRIT / SYNERGY</div>
+              <div className="text-base sm:text-lg font-bold text-cyan-300">
+                {dpsMeterStats?.critRate ?? 0}%
+              </div>
+              <div className="text-[7.5px] text-cyan-400">✨ {dpsMeterStats?.synergyTriggers ?? 0} Syn</div>
+            </div>
+          </div>
+
+          {/* Combat Log Feed */}
+          <div className="mt-1">
+            <div className="flex items-center justify-between text-[10px] text-gray-400 pb-1">
+              <span>LIVE COMBAT FEED</span>
+              <span>{dpsMeterStats?.combatDurationSec ? `${dpsMeterStats.combatDurationSec}s elapsed` : '0s'}</span>
+            </div>
+            <div className="h-36 overflow-y-auto space-y-1 pr-1 text-[9px] scrollbar-thin scrollbar-thumb-stone-800">
+              {combatLogs && combatLogs.length > 0 ? (
+                combatLogs.slice(0, 20).map((log) => (
+                  <div
+                    key={log.id}
+                    className="px-2 py-1 rounded bg-black/60 border border-stone-800/80 flex items-center justify-between gap-1"
+                  >
+                    <span className="text-[7.5px] text-gray-500 flex-shrink-0">{log.timestamp}</span>
+                    <span className="truncate flex-1 text-left" style={{ color: log.color }}>
+                      {log.text}
+                    </span>
+                    {log.value !== undefined && log.value > 0 && (
+                      <span className="font-bold flex-shrink-0" style={{ color: log.color }}>
+                        {log.value}
+                      </span>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <div className="h-full flex items-center justify-center text-gray-600 text-xs italic">
+                  No combat events logged yet. Attack a mob to measure metrics!
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

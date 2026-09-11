@@ -1,3 +1,5 @@
+import { timestampedInputBuffer } from './TimestampedInputBuffer';
+
 export interface PeerPlayerState {
   id: string;
   name: string;
@@ -134,6 +136,7 @@ export class MultiplayerClient {
       case 'pong': {
         if (packet.clientTime) {
           this.pingMs = Math.round(performance.now() - packet.clientTime);
+          timestampedInputBuffer.recordRttSample(this.pingMs, packet.serverTime);
           this.emit('ping', { pingMs: this.pingMs });
         }
         break;

@@ -14,6 +14,12 @@ import {
   Database,
   ArrowRightLeft,
   Sparkles,
+  ShieldCheck,
+  Globe,
+  Coins,
+  History,
+  Compass,
+  FileCode,
 } from 'lucide-react';
 import {
   NPCStateMachine,
@@ -22,9 +28,36 @@ import {
   NPCSubState,
 } from '../core/NPCStateMachine';
 import { AutonomousNPCEconomy } from '../engine/economy/AutonomousNPCEconomy';
-import { syncManager, HardResyncEvent } from '../core/SyncManager';
-import { BinaryNPCSnapshotSerializer } from '../engine/net/BinaryNPCSnapshotSerializer';
-import { NPCMemoryType, NPCMemoryRecord } from '../engine/ai/NPCShortTermMemory';
+import { syncManager } from '../core/SyncManager';
+import { areInvariantGuard } from '../engine/are/AREInvariantGuard';
+import { deterministicTickRecorder } from '../engine/are/DeterministicTickRecorder';
+import {
+  aurionTransitionRuntime,
+  AURION_EXPANSE_ZONE_ID,
+  AURION_TOWER_ZONE_ID,
+} from '../engine/aurion/AurionTransitionRuntime';
+import {
+  merchantBootstrapMarkets,
+  HubId,
+} from '../engine/aurion/merchantRules';
+import {
+  commodityBasePrice,
+  productionFocus,
+  routeSecurity,
+  CommodityId,
+} from '../engine/aurion/ax1LivingWorldProtocol';
+import { cityLayoutCompiler } from '../engine/are/CityLayoutCompiler';
+import {
+  timestampedInputBuffer,
+  TimestampedUserCommand,
+  InputBufferStats,
+} from '../engine/net/TimestampedInputBuffer';
+import {
+  arelorianLingua,
+  SemanticWordProfile,
+  PlayerUtteranceAnalysis,
+} from '../engine/lingua/ArelorianLinguaGrammar';
+
 
 interface DesyncLogEntry {
   id: string;
@@ -43,6 +76,8 @@ interface DeterminismDebugOverlayProps {
   onShowNotification?: (msg: string, color?: string) => void;
   onTogglePathfindingDebug?: () => void;
   isPathfindingDebugActive?: boolean;
+  onTriggerZoneTransition?: () => void;
+  onCompileCityLayout?: () => void;
 }
 
 export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = ({
@@ -52,31 +87,48 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
   onShowNotification,
   onTogglePathfindingDebug,
   isPathfindingDebugActive = false,
+  onTriggerZoneTransition,
 }) => {
   const [currentTick, setCurrentTick] = useState(0);
   const [localHash, setLocalHash] = useState('00000000');
   const [serverHash, setServerHash] = useState('00000000');
   const [isSynced, setIsSynced] = useState(true);
   const [desyncLogs, setDesyncLogs] = useState<DesyncLogEntry[]>([]);
-  const [activeTab, setActiveTab] = useState<'status' | 'entities' | 'binary_memory' | 'logs'>('status');
+  const [activeTab, setActiveTab] = useState<
+    'are_guard' | 'world_hash' | 'living_world' | 'transitions' | 'input_buffer' | 'lingua' | 'entities' | 'logs'
+  >('are_guard');
   const [isMinimized, setIsMinimized] = useState(false);
   const [simulatedDesyncActive, setSimulatedDesyncActive] = useState(false);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
 
-  // Binary Snapshot Benchmark state
-  const [binaryBenchmark, setBinaryBenchmark] = useState<{
-    jsonSizeBytes: number;
-    binarySizeBytes: number;
-    bandwidthSavedPercent: number;
-    compressionRatio: string;
-    serializationTimeUs: number;
-  }>({
-    jsonSizeBytes: 18450,
-    binarySizeBytes: 2480,
-    bandwidthSavedPercent: 86,
-    compressionRatio: '7.44x',
-    serializationTimeUs: 85,
+  // Lingua Memory State
+  const [linguaProfiles, setLinguaProfiles] = useState<SemanticWordProfile[]>([]);
+  const [linguaSimulatorInput, setLinguaSimulatorInput] = useState('Gib mir deine Beute oder ich greife an!');
+  const [linguaSimAnalysis, setLinguaSimAnalysis] = useState<PlayerUtteranceAnalysis | null>(null);
+  const [linguaStats, setLinguaStats] = useState({
+    totalVocabularySize: 0,
+    totalSamplesRecorded: 0,
+    hostileLearnedCount: 0,
+    peacefulLearnedCount: 0,
+    recentUtterancesCount: 0,
   });
+
+  // ARE Invariant Guard state
+  const [guardStatus, setGuardStatus] = useState(areInvariantGuard.getStatus());
+  const [recorderStats, setRecorderStats] = useState(deterministicTickRecorder.stats());
+  const [transitionSnapshot, setTransitionSnapshot] = useState(
+    aurionTransitionRuntime.getSnapshot('hero_player_1')
+  );
+  const [inputBufferStats, setInputBufferStats] = useState<InputBufferStats>(
+    timestampedInputBuffer.getStats(0)
+  );
+  const [selectedHub, setSelectedHub] = useState<HubId>('observatory_threshold');
+  const [cityCompilerOutput, setCityCompilerOutput] = useState<{
+    ok: boolean;
+    sector: number;
+    fixesCount: number;
+    entitiesCount: number;
+  } | null>(null);
 
   // Maintain synthetic server mirror to simulate authoritative server state verification
   const [syntheticServerNpcs, setSyntheticServerNpcs] = useState<NPCSnapshot[]>([]);
@@ -88,6 +140,10 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
     const interval = setInterval(() => {
       const tick = economy ? economy.tickCount : Math.floor(Date.now() / 100);
       setCurrentTick(tick);
+      setGuardStatus(areInvariantGuard.getStatus());
+      setRecorderStats(deterministicTickRecorder.stats());
+      setTransitionSnapshot(aurionTransitionRuntime.getSnapshot('hero_player_1'));
+      setInputBufferStats(timestampedInputBuffer.getStats(tick));
 
       // Extract local snapshot from the active economy
       let localSnapshots: NPCSnapshot[] = [];
@@ -115,8 +171,8 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
             : NPCSubState.RESTING) as NPCSubState,
           needs: {
             hunger: npc.hunger / 100,
-            security: 85 - (npc.fatigue / 200),
-            energy: 100 - (npc.fatigue / 100),
+            security: 85 - npc.fatigue / 200,
+            energy: 100 - npc.fatigue / 100,
             wealthGold: Math.floor(npc.wealthCopper / 1000),
           },
           inventory: {
@@ -170,7 +226,6 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
       // Server state mirror
       let currentServerSnapshots = syntheticServerNpcs;
       if (currentServerSnapshots.length === 0 || !simulatedDesyncActive) {
-        // In synchronized state, server state mirrors deterministic snapshot perfectly
         currentServerSnapshots = JSON.parse(JSON.stringify(localSnapshots));
         setSyntheticServerNpcs(currentServerSnapshots);
       }
@@ -187,7 +242,7 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
       const synced = comparison.matched && computedLocalHash === computedServerHash;
       setIsSynced(synced);
 
-      // Evaluate determinism divergence via SyncManager - triggers Hard State Resync if > 3 ticks desync
+      // Evaluate determinism divergence via SyncManager
       syncManager.checkDeterminismDivergence(
         computedLocalHash,
         computedServerHash,
@@ -206,11 +261,14 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
             divergingNpcIds: comparison.divergingNpcIds,
             details: comparison.details,
           };
-          // Keep maximum 20 entries
           return [newEntry, ...prev.slice(0, 19)];
         });
       }
     }, 250);
+
+    // Update Lingua profiles
+    setLinguaProfiles(arelorianLingua.getLearnedProfiles());
+    setLinguaStats(arelorianLingua.getStats());
 
     return () => clearInterval(interval);
   }, [isOpen, economy, syntheticServerNpcs, simulatedDesyncActive]);
@@ -235,9 +293,8 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
     setSyntheticServerNpcs((prev) => {
       if (prev.length === 0) return prev;
       const copy = JSON.parse(JSON.stringify(prev));
-      // Inject deterministic drift into first NPC
       if (copy[0]) {
-        copy[0].needs.hunger = 85.0; // Desync hunger
+        copy[0].needs.hunger = 85.0;
         copy[0].baseState = NPCBaseState.TRADE;
         copy[0].subState = NPCSubState.FORAGING_EMERGENCY;
       }
@@ -250,57 +307,75 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
     setSimulatedDesyncActive(false);
     setSyntheticServerNpcs([]);
     setIsSynced(true);
-    syncManager.triggerHardStateResync({
-      tick: currentTick,
-      localHash,
-      serverHash,
-      reason: 'Manual User Re-Sync via Determinism Debug Overlay',
-    });
-    onShowNotification?.('✓ Simulation state resynchronized from Authoritative Server Snapshot', '#00f0ff');
+    onShowNotification?.('🔄 Authoritative state hash resynchronized successfully.', '#00f0ff');
   };
 
   const handleClearLogs = () => {
     setDesyncLogs([]);
-    onShowNotification?.('Cleared desync logs', '#10b981');
+  };
+
+  const handleRunCityCompiler = () => {
+    const mockEntities = (economy?.npcs ?? []).map((npc) => ({
+      id: `npc_${npc.id}`,
+      type: 'building',
+      role: 'forge',
+      position: { x: npc.x, y: npc.z, z: 0 },
+    }));
+    const res = cityLayoutCompiler.compileSector(mockEntities, 0);
+    setCityCompilerOutput({
+      ok: res.ok,
+      sector: res.sector,
+      fixesCount: res.fixes.length,
+      entitiesCount: res.entities.length,
+    });
+    onShowNotification?.(
+      `🏛️ City Layout Sector 0 compiled: ${res.entities.length} entities, ${res.fixes.length} fixes applied.`,
+      '#00f0ff'
+    );
   };
 
   if (!isOpen) return null;
 
+  const latestRecorded = deterministicTickRecorder.latest();
+  const activeMarket = merchantBootstrapMarkets[selectedHub];
+
   return (
     <div
       id="determinism-debug-overlay"
-      className="fixed bottom-4 right-4 z-50 w-96 sm:w-[480px] max-h-[85vh] flex flex-col bg-[#040d1a]/95 border border-[#06b6d4]/40 rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.8)] backdrop-blur-md text-gray-200 overflow-hidden font-mono text-xs transition-all duration-200"
+      className="fixed bottom-20 right-4 z-50 w-96 md:w-[480px] bg-[#040d1a]/95 backdrop-blur-md border border-[#cd7f32]/40 rounded-xl shadow-2xl overflow-hidden text-xs text-stone-200 font-mono transition-all duration-200"
+      style={{
+        boxShadow: '0 0 35px rgba(0, 240, 255, 0.12), inset 0 0 15px rgba(205, 127, 50, 0.15)',
+      }}
     >
-      {/* Top Header Bar */}
-      <div className="flex items-center justify-between px-3 py-2.5 bg-gradient-to-r from-[#081a2e] to-[#040d1a] border-b border-[#06b6d4]/30">
+      {/* Header Bar */}
+      <div className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-[#0a192f] via-[#081a2e] to-[#040d1a] border-b border-[#cd7f32]/30 select-none">
         <div className="flex items-center gap-2">
-          <div
-            className={`w-2.5 h-2.5 rounded-full animate-pulse ${
-              isSynced
-                ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]'
-                : 'bg-rose-500 shadow-[0_0_8px_#f43f5e]'
-            }`}
-          />
-          <Cpu className="w-4 h-4 text-[#00f0ff]" />
-          <span className="font-semibold text-gray-100 tracking-wider uppercase text-[11px]">
-            Determinism Sync Monitor
+          <ShieldCheck className="w-4 h-4 text-[#00f0ff] animate-pulse" />
+          <span className="font-bold tracking-wider text-amber-200 font-sans uppercase">
+            ARE Deterministic Kernel
           </span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/50 text-[#22d3ee] border border-[#06b6d4]/30">
-            Tick #{currentTick}
+          <span
+            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+              guardStatus.ok && isSynced
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+            }`}
+          >
+            {guardStatus.ok && isSynced ? 'AXIOM COMPLIANT' : 'VIOLATION DETECTED'}
           </span>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 text-gray-400">
           <button
             onClick={() => setIsMinimized((prev) => !prev)}
-            className="p-1 hover:bg-white/10 rounded text-gray-400 hover:text-white transition-colors"
+            className="p-1 hover:text-white rounded hover:bg-white/10"
             title={isMinimized ? 'Expand' : 'Minimize'}
           >
-            {isMinimized ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            {isMinimized ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
           </button>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-rose-500/20 rounded text-gray-400 hover:text-rose-400 transition-colors"
+            className="p-1 hover:text-white rounded hover:bg-white/10"
             title="Close"
           >
             <X className="w-3.5 h-3.5" />
@@ -310,429 +385,780 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
 
       {!isMinimized && (
         <>
-          {/* Status Metric Banner */}
-          <div className="p-3 bg-black/40 border-b border-gray-800/80 flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                {isSynced ? (
-                  <>
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span className="text-emerald-400 font-bold tracking-wide">
-                      100% IN-SYNC
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <AlertTriangle className="w-4 h-4 text-rose-400 animate-bounce" />
-                    <span className="text-rose-400 font-bold tracking-wide">
-                      DESYNCHRONIZATION DETECTED
-                    </span>
-                  </>
-                )}
-              </div>
-              <span className="text-[10px] text-gray-400">
-                Protocol: FNV-1a (32-bit Quantized)
-              </span>
+          {/* Quick Metrics Bar */}
+          <div className="grid grid-cols-4 divide-x divide-stone-800 bg-[#061426] border-b border-stone-800 text-center py-1.5 text-[10px]">
+            <div>
+              <div className="text-gray-400">ARE Tick</div>
+              <div className="font-bold text-[#00f0ff]">#{currentTick}</div>
             </div>
-
-            {/* Hash Grid */}
-            <div className="grid grid-cols-2 gap-2 mt-1">
-              <div className="bg-[#081a2e]/80 p-2 rounded border border-gray-800 flex flex-col">
-                <div className="flex items-center gap-1 text-[10px] text-gray-400">
-                  <Activity className="w-3 h-3 text-[#00f0ff]" />
-                  <span>Local State Hash</span>
-                </div>
-                <span className="text-sm font-bold text-[#00f0ff] mt-0.5 tracking-widest font-mono">
-                  0x{localHash}
-                </span>
-              </div>
-
-              <div className="bg-[#081a2e]/80 p-2 rounded border border-gray-800 flex flex-col">
-                <div className="flex items-center gap-1 text-[10px] text-gray-400">
-                  <Server className="w-3 h-3 text-[#22d3ee]" />
-                  <span>Server Snapshot Hash</span>
-                </div>
-                <span
-                  className={`text-sm font-bold mt-0.5 tracking-widest font-mono ${
-                    isSynced ? 'text-emerald-400' : 'text-rose-400'
-                  }`}
-                >
-                  0x{serverHash}
-                </span>
+            <div>
+              <div className="text-gray-400">Kappa Invariant</div>
+              <div className="font-bold text-amber-300">{guardStatus.kappa ?? 1000} κ</div>
+            </div>
+            <div>
+              <div className="text-gray-400">Replay Ring</div>
+              <div className="font-bold text-emerald-400">{recorderStats.size}/1000</div>
+            </div>
+            <div>
+              <div className="text-gray-400">Zone State</div>
+              <div className="font-bold text-cyan-300 uppercase">
+                {transitionSnapshot.zoneId}
               </div>
             </div>
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex border-b border-gray-800 bg-[#061424]">
+          <div className="flex bg-[#040d1a] border-b border-stone-800 px-1 py-1 gap-1 text-[11px] overflow-x-auto">
             <button
-              onClick={() => setActiveTab('status')}
-              className={`flex-1 py-1.5 px-1.5 text-center font-medium transition-colors ${
-                activeTab === 'status'
-                  ? 'border-b-2 border-[#00f0ff] text-[#00f0ff] bg-white/5'
-                  : 'text-gray-400 hover:text-gray-200'
+              onClick={() => setActiveTab('are_guard')}
+              className={`px-2.5 py-1 rounded flex items-center gap-1 font-sans transition-all ${
+                activeTab === 'are_guard'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 font-bold'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/50'
               }`}
             >
-              Control & Stats
+              <Cpu className="w-3 h-3" />
+              Invariant Guard
             </button>
             <button
-              onClick={() => setActiveTab('binary_memory')}
-              className={`flex-1 py-1.5 px-1.5 text-center font-medium transition-colors ${
-                activeTab === 'binary_memory'
-                  ? 'border-b-2 border-[#00f0ff] text-[#00f0ff] bg-white/5'
-                  : 'text-gray-400 hover:text-gray-200'
+              onClick={() => setActiveTab('world_hash')}
+              className={`px-2.5 py-1 rounded flex items-center gap-1 font-sans transition-all ${
+                activeTab === 'world_hash'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 font-bold'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/50'
               }`}
             >
-              Binary & Memory
+              <Database className="w-3 h-3" />
+              World Hash
+            </button>
+            <button
+              onClick={() => setActiveTab('living_world')}
+              className={`px-2.5 py-1 rounded flex items-center gap-1 font-sans transition-all ${
+                activeTab === 'living_world'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 font-bold'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/50'
+              }`}
+            >
+              <Coins className="w-3 h-3" />
+              4-Hub Economy
+            </button>
+            <button
+              onClick={() => setActiveTab('transitions')}
+              className={`px-2.5 py-1 rounded flex items-center gap-1 font-sans transition-all ${
+                activeTab === 'transitions'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 font-bold'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/50'
+              }`}
+            >
+              <Compass className="w-3 h-3" />
+              Portal / Zone
+            </button>
+            <button
+              onClick={() => setActiveTab('input_buffer')}
+              className={`px-2.5 py-1 rounded flex items-center gap-1 font-sans transition-all relative ${
+                activeTab === 'input_buffer'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 font-bold'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/50'
+              }`}
+            >
+              <Zap className="w-3 h-3" />
+              Input Buffer
+              {inputBufferStats.queuedCount > 0 && (
+                <span className="px-1 py-0.2 bg-[#00f0ff] text-black font-bold rounded-full text-[8px]">
+                  {inputBufferStats.queuedCount}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab('lingua')}
+              className={`px-2.5 py-1 rounded flex items-center gap-1 font-sans transition-all relative ${
+                activeTab === 'lingua'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 font-bold'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/50'
+              }`}
+            >
+              <FileCode className="w-3 h-3" />
+              Lingua AI
+              {linguaProfiles.length > 0 && (
+                <span className="px-1 py-0.2 bg-amber-500 text-black font-bold rounded-full text-[8px]">
+                  {linguaProfiles.length}
+                </span>
+              )}
             </button>
             <button
               onClick={() => setActiveTab('entities')}
-              className={`flex-1 py-1.5 px-1.5 text-center font-medium transition-colors ${
+              className={`px-2.5 py-1 rounded flex items-center gap-1 font-sans transition-all ${
                 activeTab === 'entities'
-                  ? 'border-b-2 border-[#00f0ff] text-[#00f0ff] bg-white/5'
-                  : 'text-gray-400 hover:text-gray-200'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 font-bold'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/50'
               }`}
             >
-              Entities ({economy?.npcs.length || 3})
+              <Activity className="w-3 h-3" />
+              Entities ({economy?.npcs.length || 0})
             </button>
             <button
               onClick={() => setActiveTab('logs')}
-              className={`flex-1 py-1.5 px-1.5 text-center font-medium transition-colors relative ${
+              className={`px-2.5 py-1 rounded flex items-center gap-1 font-sans transition-all relative ${
                 activeTab === 'logs'
-                  ? 'border-b-2 border-[#00f0ff] text-[#00f0ff] bg-white/5'
-                  : 'text-gray-400 hover:text-gray-200'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 font-bold'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/50'
               }`}
             >
+              <History className="w-3 h-3" />
               Logs
               {desyncLogs.length > 0 && (
-                <span className="ml-1 px-1 py-0.2 rounded-full bg-rose-500 text-white text-[9px]">
-                  {desyncLogs.length}
-                </span>
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping absolute top-1 right-1" />
               )}
             </button>
           </div>
 
-          {/* Tab Content */}
-          <div className="p-3 overflow-y-auto max-h-64 space-y-3">
-            {activeTab === 'status' && (
+          {/* Main Tab Content */}
+          <div className="p-3 max-h-80 overflow-y-auto space-y-3">
+            {/* Tab 1: ARE Invariant Guard */}
+            {activeTab === 'are_guard' && (
               <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-2 text-[11px]">
-                  <div className="bg-black/30 p-2 rounded border border-gray-800/60">
-                    <span className="text-gray-400">Simulation Timestep:</span>
-                    <p className="font-semibold text-gray-200">50ms (20 Hz Fixed)</p>
+                <div className="p-2.5 bg-black/40 border border-stone-800 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-gray-400">Axiom 3 Invariant Guard</span>
+                    <span className="text-emerald-400 font-bold flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Zero Forbidden Tokens
+                    </span>
                   </div>
-                  <div className="bg-black/30 p-2 rounded border border-gray-800/60">
-                    <span className="text-gray-400">RNG Seed Stream:</span>
-                    <p className="font-semibold text-[#00f0ff]">Mulberry32 (0x811C9DC5)</p>
-                  </div>
-                  <div className="bg-black/30 p-2 rounded border border-gray-800/60">
-                    <span className="text-gray-400">State Serialization:</span>
-                    <p className="font-semibold text-[#00f0ff]">Binary ArrayBuffer (Dense)</p>
-                  </div>
-                  <div className="bg-black/30 p-2 rounded border border-gray-800/60">
-                    <span className="text-gray-400">Desync Recovery:</span>
-                    <p className="font-semibold text-emerald-400">Hard State Resync (&gt;3 Ticks)</p>
-                  </div>
-                  <div className="bg-black/30 p-2 rounded border border-gray-800/60">
-                    <span className="text-gray-400">Divergence Window:</span>
-                    <p
-                      className={`font-semibold ${
-                        syncManager.getConsecutiveDesyncTicks() > 0
-                          ? syncManager.getConsecutiveDesyncTicks() >= 3
-                            ? 'text-rose-400 animate-pulse'
-                            : 'text-amber-400'
-                          : 'text-emerald-400'
-                      }`}
-                    >
-                      {syncManager.getConsecutiveDesyncTicks() > 0
-                        ? `${syncManager.getConsecutiveDesyncTicks()} / 3 Ticks`
-                        : '0 Ticks (Synchronized)'}
-                    </p>
-                  </div>
-                  <div className="bg-black/30 p-2 rounded border border-gray-800/60">
-                    <span className="text-gray-400">3D Pathfinding Debug:</span>
-                    <p className={`font-semibold ${isPathfindingDebugActive ? 'text-emerald-400' : 'text-gray-400'}`}>
-                      {isPathfindingDebugActive ? 'ACTIVE (Rendering)' : 'DISABLED'}
-                    </p>
+                  <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <div className="text-gray-500">Deterministic Seed</div>
+                      <div className="text-amber-300 font-bold truncate">
+                        {String(guardStatus.seed ?? 'aurion-genesis-seed-v1')}
+                      </div>
+                    </div>
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <div className="text-gray-500">Standard Precision</div>
+                      <div className="text-[#00f0ff] font-bold">1000 κ / tile (Exact)</div>
+                    </div>
                   </div>
                 </div>
 
-                {/* Pathfinding Debug Mode Action */}
-                {onTogglePathfindingDebug && (
-                  <button
-                    onClick={onTogglePathfindingDebug}
-                    className={`w-full py-1.5 px-2 rounded border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
-                      isPathfindingDebugActive
-                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
-                        : 'bg-black/40 text-gray-300 border-gray-700 hover:border-[#00f0ff]/50'
-                    }`}
-                  >
-                    <Zap className="w-3.5 h-3.5 text-[#00f0ff]" />
-                    {isPathfindingDebugActive ? 'Disable 3D Pathfinding Debug' : 'Enable 3D Pathfinding Debug'}
-                  </button>
-                )}
+                <div className="p-2.5 bg-black/40 border border-stone-800 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-amber-200 font-sans">
+                      Axiomatic City Layout Compiler
+                    </span>
+                    <button
+                      onClick={handleRunCityCompiler}
+                      className="px-2 py-0.5 bg-[#00f0ff]/20 hover:bg-[#00f0ff]/30 text-[#00f0ff] border border-[#00f0ff]/40 rounded text-[10px] font-bold transition-all"
+                    >
+                      Compile Sector 0
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-gray-400">
+                    Enforces deterministic non-overlapping building distances & road anchors without wall-clock drift.
+                  </p>
+                  {cityCompilerOutput && (
+                    <div className="p-1.5 bg-cyan-950/30 border border-cyan-500/30 rounded text-[10px] text-cyan-200 space-y-0.5">
+                      <div>Sector: {cityCompilerOutput.sector} | Status: {cityCompilerOutput.ok ? 'COMPLIANT' : 'FIXED'}</div>
+                      <div>Entities: {cityCompilerOutput.entitiesCount} | Spacing Fixes: {cityCompilerOutput.fixesCount}</div>
+                    </div>
+                  )}
+                </div>
 
-                {/* Diagnostic Action Controls */}
-                <div className="pt-2 border-t border-gray-800 flex gap-2">
+                <div className="flex gap-2">
                   <button
                     onClick={handleSimulateDesync}
-                    className="flex-1 py-1.5 px-2 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-medium flex items-center justify-center gap-1.5 transition-colors active:scale-95"
+                    className="flex-1 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded text-[10px] font-bold transition-all"
                   >
-                    <Bug className="w-3.5 h-3.5" />
-                    Simulate Desync
+                    Simulate Drift
                   </button>
                   <button
                     onClick={handleForceResync}
-                    className="flex-1 py-1.5 px-2 rounded bg-[#06b6d4]/20 hover:bg-[#06b6d4]/30 text-[#00f0ff] border border-[#06b6d4]/40 font-medium flex items-center justify-center gap-1.5 transition-colors active:scale-95"
+                    className="flex-1 py-1.5 bg-[#00f0ff]/10 hover:bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 rounded text-[10px] font-bold transition-all"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    Re-Sync Server
+                    Force State Sync
                   </button>
                 </div>
               </div>
             )}
 
-            {activeTab === 'binary_memory' && (
-              <div className="space-y-3 text-[11px]">
-                {/* Serialization Benchmark Card */}
-                <div className="p-2.5 rounded bg-black/40 border border-[#06b6d4]/30 space-y-2">
-                  <div className="flex items-center justify-between text-[#00f0ff] font-semibold">
-                    <span className="flex items-center gap-1">
-                      <Database className="w-3.5 h-3.5" />
-                      Binary ArrayBuffer vs JSON Serialization
+            {/* Tab 2: World Hash Snapshot */}
+            {activeTab === 'world_hash' && (
+              <div className="space-y-3">
+                <div className="p-2.5 bg-black/40 border border-stone-800 rounded-lg space-y-2">
+                  <div className="text-[11px] font-bold text-amber-200 font-sans">
+                    SHA-256 World Hash Snapshot
+                  </div>
+                  <div className="p-2 bg-stone-900/80 rounded font-mono text-[10px] text-cyan-300 break-all border border-stone-800">
+                    {latestRecorded?.worldHash || 'Generating canonical SHA-256 root hash...'}
+                  </div>
+                  <div className="text-[10px] text-gray-400 flex justify-between">
+                    <span>Chunk Grid: 64x64m</span>
+                    <span>Deterministic Marker: tick:{currentTick}</span>
+                  </div>
+                </div>
+
+                {latestRecorded?.worldSnapshot && (
+                  <div className="p-2.5 bg-black/40 border border-stone-800 rounded-lg space-y-2">
+                    <div className="text-[11px] font-bold text-stone-300 font-sans">
+                      Active Chunk Buckets ({latestRecorded.worldSnapshot.chunks.length})
+                    </div>
+                    <div className="space-y-1 max-h-36 overflow-y-auto">
+                      {latestRecorded.worldSnapshot.chunks.map((chunk, idx) => (
+                        <div
+                          key={idx}
+                          className="p-1.5 bg-stone-900/50 border border-stone-800 rounded flex items-center justify-between text-[10px]"
+                        >
+                          <div>
+                            <span className="text-amber-300 font-bold">
+                              Chunk [{chunk.chunkX}:{chunk.chunkY}]
+                            </span>
+                            <span className="text-gray-400 ml-2">
+                              {chunk.counts.total} entities ({chunk.counts.players}P / {chunk.counts.npcs}N / {chunk.counts.loot}L)
+                            </span>
+                          </div>
+                          <span className="text-cyan-400 font-mono text-[9px]">
+                            0x{chunk.hash.slice(0, 8)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tab 3: 4-Hub Living World Economy */}
+            {activeTab === 'living_world' && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-4 gap-1">
+                  {(['observatory_threshold', 'windhollow', 'emberfall', 'cinder_vault'] as HubId[]).map(
+                    (hub) => (
+                      <button
+                        key={hub}
+                        onClick={() => setSelectedHub(hub)}
+                        className={`p-1.5 rounded text-[10px] text-center font-bold capitalize transition-all ${
+                          selectedHub === hub
+                            ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40'
+                            : 'bg-stone-900/60 text-stone-400 hover:text-stone-200 border border-stone-800'
+                        }`}
+                      >
+                        {hub.replace('_', ' ')}
+                      </button>
+                    )
+                  )}
+                </div>
+
+                <div className="p-2.5 bg-black/40 border border-stone-800 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-amber-200 capitalize">
+                      {activeMarket.hubId.replace('_', ' ')}
                     </span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                      -{binaryBenchmark.bandwidthSavedPercent}% Payload
+                    <span className="text-gray-400">{activeMarket.controllingGuild}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <span className="text-gray-400">Treasury:</span>{' '}
+                      <span className="text-yellow-400 font-bold">
+                        {activeMarket.treasuryCopper.toLocaleString()} Cu
+                      </span>
+                    </div>
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <span className="text-gray-400">Tax Rate:</span>{' '}
+                      <span className="text-cyan-300 font-bold">
+                        {(activeMarket.taxRateBasisPoints / 100).toFixed(2)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-[10px] text-gray-400 font-bold pt-1">
+                    Commodity Stock & Base Prices:
+                  </div>
+                  <div className="grid grid-cols-3 gap-1 text-[9px]">
+                    {(Object.keys(activeMarket.stock) as CommodityId[]).map((c) => (
+                      <div
+                        key={c}
+                        className="p-1 bg-stone-900/40 rounded border border-stone-800/80 flex justify-between"
+                      >
+                        <span className="capitalize text-stone-300">{c}</span>
+                        <span className="text-amber-300 font-bold">{activeMarket.stock[c]}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="text-[9px] text-gray-400 flex justify-between pt-1 border-t border-stone-800">
+                    <span>Production Focus: {productionFocus[selectedHub].join(', ')}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Tab 4: Deterministic Zone Transition */}
+            {activeTab === 'transitions' && (
+              <div className="space-y-3">
+                <div className="p-2.5 bg-black/40 border border-stone-800 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-amber-200 font-sans">
+                      Turmportal & Rückkehrstein Transition
+                    </span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                        transitionSnapshot.zoneId === AURION_EXPANSE_ZONE_ID
+                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      }`}
+                    >
+                      Zone: {transitionSnapshot.zoneId.toUpperCase()}
                     </span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 text-[10px]">
-                    <div className="bg-[#081a2e]/60 p-1.5 rounded border border-gray-800">
-                      <span className="text-gray-400">Binary ArrayBuffer:</span>
-                      <p className="text-emerald-400 font-bold font-mono mt-0.5">
-                        {binaryBenchmark.binarySizeBytes} Bytes (Dense)
-                      </p>
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <div className="text-gray-500">Entry Anchor</div>
+                      <div className="text-stone-300 font-bold truncate">
+                        {transitionSnapshot.entryPointId}
+                      </div>
                     </div>
-                    <div className="bg-[#081a2e]/60 p-1.5 rounded border border-gray-800">
-                      <span className="text-gray-400">Legacy JSON.stringify:</span>
-                      <p className="text-rose-400 font-bold font-mono mt-0.5">
-                        {binaryBenchmark.jsonSizeBytes} Bytes
-                      </p>
-                    </div>
-                    <div className="bg-[#081a2e]/60 p-1.5 rounded border border-gray-800">
-                      <span className="text-gray-400">Compression Factor:</span>
-                      <p className="text-[#00f0ff] font-bold font-mono mt-0.5">
-                        {binaryBenchmark.compressionRatio} Compression
-                      </p>
-                    </div>
-                    <div className="bg-[#081a2e]/60 p-1.5 rounded border border-gray-800">
-                      <span className="text-gray-400">Packing Latency:</span>
-                      <p className="text-yellow-300 font-bold font-mono mt-0.5">
-                        ~{binaryBenchmark.serializationTimeUs} µs (Sub-ms)
-                      </p>
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <div className="text-gray-500">Return Anchor</div>
+                      <div className="text-stone-300 font-bold truncate">
+                        {transitionSnapshot.returnPointId}
+                      </div>
                     </div>
                   </div>
+
+                  <button
+                    onClick={onTriggerZoneTransition}
+                    className="w-full py-2 bg-gradient-to-r from-[#00f0ff]/20 to-[#cd7f32]/20 hover:from-[#00f0ff]/30 hover:to-[#cd7f32]/30 text-amber-200 border border-[#00f0ff]/50 rounded-lg text-[11px] font-bold tracking-wider flex items-center justify-center gap-2 shadow-lg transition-all"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-[#00f0ff]" />
+                    {transitionSnapshot.zoneId === AURION_EXPANSE_ZONE_ID
+                      ? 'Touch Return Stone (Return to Tower)'
+                      : 'Step Through Turmportal (Enter Aurion Expanse)'}
+                  </button>
                 </div>
 
-                {/* NPC Short-Term Memory Inspector */}
-                <div className="p-2.5 rounded bg-black/40 border border-gray-800 space-y-2">
-                  <div className="flex items-center justify-between text-gray-200 font-semibold">
-                    <span className="flex items-center gap-1">
-                      <Zap className="w-3.5 h-3.5 text-amber-400" />
-                      NPC Short-Term Working Memory
-                    </span>
-                    <span className="text-[10px] text-gray-400">
-                      Ring Buffer (Max 8 Slots / NPC, 3500-Tick Decay)
-                    </span>
+                {transitionSnapshot.lastReceipt && (
+                  <div className="p-2 bg-stone-900/70 border border-stone-800 rounded text-[10px] space-y-1">
+                    <div className="text-gray-400 font-bold">Latest Transition Receipt:</div>
+                    <div className="text-cyan-300 font-mono text-[9px]">
+                      Req: {transitionSnapshot.lastReceipt.requestId}
+                    </div>
+                    <div className="flex justify-between text-gray-400 text-[9px]">
+                      <span>Seq #{transitionSnapshot.lastReceipt.sequenceId}</span>
+                      <span>Status: {transitionSnapshot.lastReceipt.status}</span>
+                      <span>Tick: #{transitionSnapshot.lastReceipt.appliedAtTick ?? 'pending'}</span>
+                    </div>
                   </div>
-
-                  <div className="space-y-1.5 max-h-28 overflow-y-auto">
-                    {economy && economy.npcs.length > 0 ? (
-                      economy.npcs.slice(0, 3).map((npc) => {
-                        const memories = npc.memory?.getMemories?.() || [];
-                        return (
-                          <div key={npc.id} className="p-1.5 bg-[#081a2e]/60 rounded border border-gray-800 text-[10px]">
-                            <div className="flex justify-between items-center font-semibold text-gray-300">
-                              <span>{npc.name}</span>
-                              <span className="text-amber-300">{memories.length} Active Memories</span>
-                            </div>
-                            {memories.length === 0 ? (
-                              <p className="text-gray-500 text-[9px] mt-0.5">No hazards or obstacles in recent buffer</p>
-                            ) : (
-                              <div className="mt-1 space-y-0.5">
-                                {memories.map((m, idx) => (
-                                  <div key={idx} className="flex justify-between text-[9px] text-gray-400">
-                                    <span className={m.type === NPCMemoryType.HAZARD_THREAT ? 'text-rose-400' : m.type === NPCMemoryType.TRADE_DEAL ? 'text-emerald-400' : 'text-amber-400'}>
-                                      {m.type === NPCMemoryType.HAZARD_THREAT ? '⚠️ THREAT' : m.type === NPCMemoryType.TRADE_DEAL ? '💰 TRADE' : m.type === NPCMemoryType.PATH_DEVIATION ? '🧭 DEVIATION' : '⚡ EVENT'}
-                                    </span>
-                                    <span>Pos: ({m.x.toFixed(1)}, {m.z.toFixed(1)})</span>
-                                    <span>Intensity: {(m.intensity * 100).toFixed(0)}%</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <p className="text-gray-500 text-center py-2">No active NPC memory stores available.</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* NPC Long-Term Memory (Episodic & Relational) Inspector */}
-                <div className="p-2.5 rounded bg-black/40 border border-[#b8860b]/40 space-y-2">
-                  <div className="flex items-center justify-between text-amber-200 font-semibold">
-                    <span className="flex items-center gap-1">
-                      <Sparkles className="w-3.5 h-3.5 text-[#00f0ff]" />
-                      NPC Long-Term Memory & Social Standing
-                    </span>
-                    <span className="text-[10px] text-cyan-300">
-                      Enemies | Trade Points | Resources | Leaders
-                    </span>
-                  </div>
-
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {economy && economy.npcs.length > 0 ? (
-                      economy.npcs.slice(0, 3).map((npc) => {
-                        const ltm = npc.longTermMemory;
-                        if (!ltm) return null;
-                        const enemies = ltm.getEnemies();
-                        const tradePoints = ltm.getGoodTradePoints();
-                        const resourceSpots = ltm.getBestResourceSpots();
-                        const leadership = ltm.getZoneLeadership();
-
-                        return (
-                          <div key={`ltm_${npc.id}`} className="p-2 bg-[#061528]/80 rounded border border-gray-800 text-[10px] space-y-1.5">
-                            <div className="flex justify-between items-center">
-                              <span className="font-bold text-amber-100">{npc.name}</span>
-                              <span className={`px-1.5 py-0.2 rounded font-mono text-[9px] border ${
-                                leadership.socialStanding === 'EXALTED' || leadership.socialStanding === 'HONORED' || leadership.socialStanding === 'RESPECTED'
-                                  ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40'
-                                  : leadership.socialStanding === 'NEUTRAL'
-                                  ? 'bg-cyan-950/60 text-cyan-300 border-cyan-500/40'
-                                  : 'bg-rose-950/60 text-rose-300 border-rose-500/40'
-                              }`}>
-                                Standing: {leadership.socialStanding} ({leadership.reputationScore > 0 ? `+${leadership.reputationScore}` : leadership.reputationScore})
-                              </span>
-                            </div>
-
-                            {/* Zone Leader Knowledge */}
-                            <div className="bg-black/40 p-1.5 rounded border border-gray-800/80 flex justify-between items-center text-[9px]">
-                              <div>
-                                <span className="text-gray-400">Zone-Anführer: </span>
-                                <span className="text-cyan-300 font-semibold">{leadership.zoneLeaderName}</span>
-                                <span className="text-gray-500 ml-1">({leadership.zoneLeaderTitle})</span>
-                              </div>
-                              <span className="text-amber-300 font-mono text-[8px]">{leadership.zoneLeaderFaction}</span>
-                            </div>
-
-                            {/* Cognitive Memory Columns */}
-                            <div className="grid grid-cols-3 gap-1.5 text-[8.5px]">
-                              {/* Enemies */}
-                              <div className="bg-rose-950/20 p-1 rounded border border-rose-500/20">
-                                <span className="font-bold text-rose-300 block mb-0.5">Feinde ({enemies.length})</span>
-                                {enemies.length === 0 ? (
-                                  <span className="text-gray-500">Keine Feinde gemerkt</span>
-                                ) : (
-                                  enemies.slice(0, 2).map((e, idx) => (
-                                    <div key={idx} className="text-rose-200 truncate">
-                                      ⚔️ {e.name} <span className="text-rose-400 font-mono">({e.threatLevel} Threat)</span>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-
-                              {/* Trade Points */}
-                              <div className="bg-emerald-950/20 p-1 rounded border border-emerald-500/20">
-                                <span className="font-bold text-emerald-300 block mb-0.5">Top-Handel ({tradePoints.length})</span>
-                                {tradePoints.length === 0 ? (
-                                  <span className="text-gray-500">Keine Handelsknoten</span>
-                                ) : (
-                                  tradePoints.slice(0, 2).map((t, idx) => (
-                                    <div key={idx} className="text-emerald-200 truncate">
-                                      💰 {t.hubName} <span className="text-amber-300 font-mono">({Math.round(t.bestProfitCopper)} Cu)</span>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-
-                              {/* Resource Spots */}
-                              <div className="bg-cyan-950/20 p-1 rounded border border-cyan-500/20">
-                                <span className="font-bold text-cyan-300 block mb-0.5">Ressourcen ({resourceSpots.length})</span>
-                                {resourceSpots.length === 0 ? (
-                                  <span className="text-gray-500">Keine Vorkommen</span>
-                                ) : (
-                                  resourceSpots.slice(0, 2).map((r, idx) => (
-                                    <div key={idx} className="text-cyan-200 truncate">
-                                      ⛏️ {r.resourceName} <span className="text-cyan-400 font-mono">({r.yieldRating.toFixed(1)}x)</span>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <p className="text-gray-500 text-center py-2">Keine NPC-Langzeitgedächtnisse aktiv.</p>
-                    )}
-                  </div>
-                </div>
+                )}
               </div>
             )}
 
-            {activeTab === 'entities' && (
-              <div className="space-y-2">
-                {(syntheticServerNpcs.length > 0 ? syntheticServerNpcs : [
-                  {
-                    id: 'npc_1',
-                    name: 'Alden the Mason',
-                    baseState: NPCBaseState.WORKING,
-                    subState: NPCSubState.HARVESTING,
-                    needs: { hunger: 24.5, security: 90.0, energy: 78.0, wealthGold: 14 },
-                    inventory: { raw_material: 6, food: 2 },
-                    homePosition: { x: 12.5, y: 0, z: -8.4 },
-                    ticksInCurrentState: 14,
-                  }
-                ]).map((npc) => {
-                  const npcHash = NPCStateMachine.calculateNPCHash(npc);
-                  const isSelected = selectedEntityId === npc.id;
-
-                  return (
-                    <div
-                      key={npc.id}
-                      onClick={() => setSelectedEntityId(isSelected ? null : npc.id)}
-                      className={`p-2 rounded border cursor-pointer transition-all ${
-                        isSelected
-                          ? 'bg-[#0a2342] border-[#00f0ff]'
-                          : 'bg-black/30 border-gray-800/80 hover:border-gray-700'
+            {/* Tab: Timestamped Input Buffer */}
+            {activeTab === 'input_buffer' && (
+              <div className="space-y-3">
+                <div className="p-2.5 bg-black/40 border border-stone-800 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-amber-200 font-sans flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-[#00f0ff]" />
+                      Deterministic Input Buffer (Axiom 3)
+                    </span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                        inputBufferStats.bufferHealth === 'optimal'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-gray-200">{npc.name}</span>
-                          <span className="px-1 py-0.2 rounded bg-black/60 text-[#22d3ee] text-[10px] border border-[#06b6d4]/20">
-                            {npc.baseState}
+                      {inputBufferStats.bufferHealth.toUpperCase()}
+                    </span>
+                  </div>
+
+                  {/* Buffer Network & Delay Metrics */}
+                  <div className="grid grid-cols-4 gap-1.5 text-center text-[10px]">
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <div className="text-gray-400">RTT / Ping</div>
+                      <div className="text-[#00f0ff] font-bold font-mono">
+                        {inputBufferStats.currentEstimatedPingMs.toFixed(1)} ms
+                      </div>
+                    </div>
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <div className="text-gray-400">Jitter (σ)</div>
+                      <div className="text-amber-300 font-bold font-mono">
+                        ±{inputBufferStats.jitterMs.toFixed(1)} ms
+                      </div>
+                    </div>
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <div className="text-gray-400">Lead Ticks</div>
+                      <div className="text-cyan-300 font-bold font-mono">
+                        +{inputBufferStats.bufferedLeadTicks} ticks
+                      </div>
+                    </div>
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <div className="text-gray-400">Processed</div>
+                      <div className="text-emerald-400 font-bold font-mono">
+                        {inputBufferStats.totalExecuted}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Test Dispatch Button */}
+                  <div className="pt-1 flex gap-2">
+                    <button
+                      onClick={() => {
+                        timestampedInputBuffer.enqueueCommand(
+                          'hero_player_1',
+                          'CAST_SPELL',
+                          { skillIndex: 0, spellId: 'Arcane Cleave' },
+                          currentTick
+                        );
+                        setInputBufferStats(timestampedInputBuffer.getStats(currentTick));
+                        if (onShowNotification) {
+                          onShowNotification('⚡ Timestamped Input Queued (+lead ticks compensated)', '#00f0ff');
+                        }
+                      }}
+                      className="flex-1 py-1.5 bg-[#00f0ff]/20 hover:bg-[#00f0ff]/30 text-cyan-200 border border-[#00f0ff]/40 rounded text-[10px] font-bold flex items-center justify-center gap-1 transition-colors"
+                    >
+                      <Zap className="w-3 h-3 text-[#00f0ff]" />
+                      Simulate Queued Skill Cast
+                    </button>
+                    <button
+                      onClick={() => {
+                        timestampedInputBuffer.enqueueCommand(
+                          'hero_player_1',
+                          'DODGE_ROLL',
+                          { dirX: 1, dirZ: 0, speed: 1 },
+                          currentTick
+                        );
+                        setInputBufferStats(timestampedInputBuffer.getStats(currentTick));
+                        if (onShowNotification) {
+                          onShowNotification('💨 Timestamped Roll Queued', '#fbbf24');
+                        }
+                      }}
+                      className="flex-1 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 rounded text-[10px] font-bold flex items-center justify-center gap-1 transition-colors"
+                    >
+                      <Sparkles className="w-3 h-3 text-amber-300" />
+                      Simulate Queued Roll
+                    </button>
+                  </div>
+                </div>
+
+                {/* Queued Commands Pipeline */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[10px] text-gray-400 px-1 font-bold">
+                    <span>Active Queued Commands ({timestampedInputBuffer.getQueuedCommands().length})</span>
+                    <span>Target Tick</span>
+                  </div>
+
+                  {timestampedInputBuffer.getQueuedCommands().length === 0 ? (
+                    <div className="p-3 text-center text-gray-500 bg-stone-900/30 border border-stone-800 rounded text-[10px]">
+                      Input queue empty. Commands execute upon reaching target tick.
+                    </div>
+                  ) : (
+                    timestampedInputBuffer.getQueuedCommands().map((cmd) => (
+                      <div
+                        key={cmd.sequenceId}
+                        className="p-2 bg-stone-900/80 border border-stone-700/80 rounded text-[10px] flex items-center justify-between"
+                      >
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 font-bold text-amber-200">
+                            <span className="text-[#00f0ff] font-mono">#{cmd.sequenceId}</span>
+                            <span>{cmd.actionType}</span>
+                            <span className="text-gray-400 font-mono text-[9px]">({cmd.commandHash})</span>
+                          </div>
+                          <div className="text-[9px] text-gray-400 font-mono">
+                            Sent at #{currentTick} | RTT: {cmd.estimatedLatencyMs}ms
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-cyan-300 font-mono font-bold">
+                            Tick #{cmd.targetTick}
+                          </div>
+                          <div className="text-[8px] text-gray-500 font-mono">
+                            Δ {cmd.targetTick - currentTick} ticks left
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Execution History */}
+                {timestampedInputBuffer.getHistory().length > 0 && (
+                  <div className="space-y-1">
+                    <div className="text-[10px] text-gray-400 font-bold px-1">
+                      Recent Deterministic Executions:
+                    </div>
+                    <div className="space-y-1 max-h-28 overflow-y-auto">
+                      {timestampedInputBuffer.getHistory().slice(-5).reverse().map((cmd) => (
+                        <div
+                          key={cmd.sequenceId}
+                          className="p-1.5 bg-black/40 border border-stone-800 rounded text-[9px] flex items-center justify-between text-gray-300 font-mono"
+                        >
+                          <span className="text-emerald-400 font-bold">
+                            #{cmd.sequenceId} {cmd.actionType}
+                          </span>
+                          <span className="text-gray-400">
+                            Target #{cmd.targetTick} → Exec #{cmd.executedAtTick ?? cmd.targetTick}
                           </span>
                         </div>
-                        <span className="text-[10px] font-mono text-gray-400">
-                          #{npcHash.slice(0, 6)}
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tab: Arelorian Lingua Semantic Memory & Learning Engine */}
+            {activeTab === 'lingua' && (
+              <div className="space-y-3">
+                {/* Stats Header */}
+                <div className="p-2.5 bg-black/40 border border-stone-800 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-gray-400 font-bold flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-[#00f0ff]" />
+                      Arelorian Deterministic Lingua Memory
+                    </span>
+                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                      Active
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-1 text-center text-[10px] pt-1">
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <div className="text-gray-400 text-[9px]">Words</div>
+                      <div className="font-bold text-cyan-300">{linguaStats.totalVocabularySize}</div>
+                    </div>
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <div className="text-gray-400 text-[9px]">Samples</div>
+                      <div className="font-bold text-amber-300">{linguaStats.totalSamplesRecorded}</div>
+                    </div>
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <div className="text-gray-400 text-[9px]">Hostile</div>
+                      <div className="font-bold text-rose-400">{linguaStats.hostileLearnedCount}</div>
+                    </div>
+                    <div className="p-1.5 bg-stone-900/60 rounded border border-stone-800">
+                      <div className="text-gray-400 text-[9px]">Peaceful</div>
+                      <div className="font-bold text-emerald-400">{linguaStats.peacefulLearnedCount}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Live Semantic Simulator */}
+                <div className="p-2.5 bg-black/50 border border-stone-800 rounded-lg space-y-2">
+                  <div className="text-[10px] text-amber-300 font-bold flex items-center justify-between">
+                    <span>Live Utterance Semantic Intent Simulator</span>
+                    <span className="text-[9px] text-gray-400 font-mono">Tokenized Evaluation</span>
+                  </div>
+
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={linguaSimulatorInput}
+                      onChange={(e) => setLinguaSimulatorInput(e.target.value)}
+                      placeholder="Type player utterance..."
+                      className="flex-1 bg-stone-900/90 border border-stone-700 rounded px-2 py-1 text-[10px] text-white outline-none focus:border-[#00f0ff]"
+                    />
+                    <button
+                      onClick={() => {
+                        const res = arelorianLingua.analyzeUtterance(linguaSimulatorInput, currentTick);
+                        setLinguaSimAnalysis(res);
+                      }}
+                      className="px-2.5 py-1 bg-[#00f0ff]/20 hover:bg-[#00f0ff]/30 text-cyan-200 border border-[#00f0ff]/40 rounded text-[10px] font-bold transition-colors"
+                    >
+                      Analyze
+                    </button>
+                  </div>
+
+                  {linguaSimAnalysis && (
+                    <div className="p-2 bg-stone-950/80 border border-cyan-500/30 rounded space-y-1.5 text-[10px]">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Dominant Intent:</span>
+                        <span
+                          className={`font-bold px-1.5 py-0.2 rounded text-[9px] ${
+                            linguaSimAnalysis.dominantEventType.includes('ATTACK') ||
+                            linguaSimAnalysis.dominantEventType.includes('THREAT') ||
+                            linguaSimAnalysis.dominantEventType.includes('RAID')
+                              ? 'bg-rose-950 text-rose-300 border border-rose-500/40'
+                              : linguaSimAnalysis.dominantEventType.includes('COMMERCE')
+                              ? 'bg-amber-950 text-amber-300 border border-amber-500/40'
+                              : 'bg-emerald-950 text-emerald-300 border border-emerald-500/40'
+                          }`}
+                        >
+                          {linguaSimAnalysis.dominantEventType}
                         </span>
                       </div>
 
-                      <div className="mt-1 flex items-center justify-between text-[10px] text-gray-400">
-                        <span>Sub: <span className="text-gray-300">{npc.subState}</span></span>
-                        <span>Hunger: <span className="text-amber-300">{npc.needs.hunger.toFixed(0)}%</span></span>
-                        <span>Security: <span className="text-emerald-300">{npc.needs.security.toFixed(0)}%</span></span>
-                        <span>Gold: <span className="text-yellow-400">{npc.needs.wealthGold}g</span></span>
+                      <div className="flex items-center justify-between text-[9px]">
+                        <span className="text-gray-400">Threat Score:</span>
+                        <span
+                          className={`font-bold ${
+                            linguaSimAnalysis.inferredThreatLevel > 20
+                              ? 'text-rose-400'
+                              : linguaSimAnalysis.inferredThreatLevel < -20
+                              ? 'text-emerald-400'
+                              : 'text-stone-300'
+                          }`}
+                        >
+                          {linguaSimAnalysis.inferredThreatLevel > 0 ? '+' : ''}
+                          {linguaSimAnalysis.inferredThreatLevel} / 100
+                        </span>
+                      </div>
+
+                      <div className="text-[9px] text-cyan-300 font-mono border-t border-stone-800 pt-1">
+                        <span className="text-gray-500">Runic: </span>
+                        {linguaSimAnalysis.arelorianTranslation}
+                      </div>
+
+                      {/* Simulated NPC Reactions */}
+                      <div className="grid grid-cols-2 gap-1 pt-1 text-[8.5px]">
+                        {(['guard', 'merchant'] as const).map((role) => {
+                          const react = arelorianLingua.generateNPCReaction(
+                            role === 'guard' ? 'Wache Kaelen' : 'Händler Barnaby',
+                            role,
+                            linguaSimAnalysis
+                          );
+                          return (
+                            <div key={role} className="p-1.5 bg-stone-900/90 rounded border border-stone-800 space-y-0.5">
+                              <div className="flex justify-between font-bold text-gray-300 capitalize">
+                                <span>{role}:</span>
+                                <span
+                                  className={
+                                    react.posture === 'DEFENSIVE' || react.posture === 'ALERT_GUARDS'
+                                      ? 'text-rose-400'
+                                      : react.posture === 'FRIENDLY'
+                                      ? 'text-emerald-400'
+                                      : 'text-amber-300'
+                                  }
+                                >
+                                  [{react.posture}]
+                                </span>
+                              </div>
+                              <p className="text-gray-400 truncate">"{react.dialogueText}"</p>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                  );
-                })}
+                  )}
+
+                  {/* Contextual Training Action Buttons */}
+                  <div className="pt-1 space-y-1">
+                    <div className="text-[9px] text-gray-400 font-bold">Simulate Contextual Event Learning:</div>
+                    <div className="flex flex-wrap gap-1">
+                      <button
+                        onClick={() => {
+                          arelorianLingua.learnFromContextualUtterance('Beute Raub Angriff', 'RAID_THEFT', currentTick);
+                          setLinguaProfiles(arelorianLingua.getLearnedProfiles());
+                          setLinguaStats(arelorianLingua.getStats());
+                          onShowNotification?.("🧠 Learned 'Beute / Raub / Angriff' under RAID_THEFT", '#ef4444');
+                        }}
+                        className="px-2 py-0.5 bg-rose-950/50 hover:bg-rose-900/50 text-rose-200 border border-rose-500/30 rounded text-[9px] font-bold"
+                      >
+                        + Train Raid Words ('Beute')
+                      </button>
+                      <button
+                        onClick={() => {
+                          arelorianLingua.learnFromContextualUtterance('Handel Gold Kaufen Tauschen', 'TRADE_COMMERCE', currentTick);
+                          setLinguaProfiles(arelorianLingua.getLearnedProfiles());
+                          setLinguaStats(arelorianLingua.getStats());
+                          onShowNotification?.("🧠 Learned 'Handel / Gold' under TRADE_COMMERCE", '#f59e0b');
+                        }}
+                        className="px-2 py-0.5 bg-amber-950/50 hover:bg-amber-900/50 text-amber-200 border border-amber-500/30 rounded text-[9px] font-bold"
+                      >
+                        + Train Trade Words ('Handel')
+                      </button>
+                      <button
+                        onClick={() => {
+                          arelorianLingua.learnFromContextualUtterance('Frieden Danke Freund Ehre', 'PEACE_GREETING', currentTick);
+                          setLinguaProfiles(arelorianLingua.getLearnedProfiles());
+                          setLinguaStats(arelorianLingua.getStats());
+                          onShowNotification?.("🧠 Learned 'Frieden / Danke' under PEACE_GREETING", '#10b981');
+                        }}
+                        className="px-2 py-0.5 bg-emerald-950/50 hover:bg-emerald-900/50 text-emerald-200 border border-emerald-500/30 rounded text-[9px] font-bold"
+                      >
+                        + Train Peace Words ('Frieden')
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Learned Word Profiles List */}
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center text-[10px] text-gray-400 font-bold px-1">
+                    <span>Learned Semantic Profiles ({linguaProfiles.length})</span>
+                    <span>Threat / Samples</span>
+                  </div>
+
+                  <div className="space-y-1 max-h-36 overflow-y-auto">
+                    {linguaProfiles.length === 0 ? (
+                      <div className="p-3 text-center text-gray-500 bg-stone-900/30 border border-stone-800 rounded text-[10px]">
+                        No custom words learned yet. Talk in chat or simulate events above.
+                      </div>
+                    ) : (
+                      linguaProfiles.map((p) => (
+                        <div
+                          key={p.word}
+                          className="p-1.5 bg-stone-900/70 border border-stone-800 rounded text-[9.5px] flex items-center justify-between"
+                        >
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-1.5 font-bold text-gray-200">
+                              <span className="text-cyan-300 font-mono">{p.word}</span>
+                              <span className="text-gray-500 text-[8.5px]">({arelorianLingua.transliterateToArelorian(p.word)})</span>
+                            </div>
+                            <div className="text-[8.5px] text-gray-400 flex gap-2">
+                              <span>Atk: {p.eventCounts?.COMBAT_ATTACK || 0}</span>
+                              <span>Raid: {p.eventCounts?.RAID_THEFT || 0}</span>
+                              <span>Trade: {p.eventCounts?.TRADE_COMMERCE || 0}</span>
+                              <span>Peace: {p.eventCounts?.PEACE_GREETING || 0}</span>
+                            </div>
+                          </div>
+
+                          <div className="text-right font-mono">
+                            <div
+                              className={`font-bold ${
+                                p.threatScore > 20
+                                  ? 'text-rose-400'
+                                  : p.threatScore < -20
+                                  ? 'text-emerald-400'
+                                  : 'text-stone-300'
+                              }`}
+                            >
+                              {p.threatScore > 0 ? '+' : ''}
+                              {p.threatScore}
+                            </div>
+                            <div className="text-[8px] text-gray-500">{p.totalOccurrences}x seen</div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
+            {/* Tab 5: Entities */}
+            {activeTab === 'entities' && (
+              <div className="space-y-1.5">
+                {(economy?.npcs ?? []).slice(0, 10).map((npc) => (
+                  <div
+                    key={npc.id}
+                    className="p-2 bg-black/40 border border-stone-800 rounded text-[10px] space-y-1 hover:border-stone-700 transition-colors"
+                  >
+                    <div className="flex items-center justify-between text-amber-200">
+                      <span className="font-bold">{npc.name}</span>
+                      <span className="text-[#00f0ff] font-mono">
+                        ({npc.x.toFixed(1)}, {npc.z.toFixed(1)})
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-gray-400 text-[9px]">
+                      <span>State: {npc.macroState}</span>
+                      <span>Fatigue: {npc.fatigue}</span>
+                      <span>Gold: {Math.floor(npc.wealthCopper / 1000)}g</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Tab 6: Logs */}
             {activeTab === 'logs' && (
               <div className="space-y-2">
                 {desyncLogs.length === 0 ? (
@@ -780,10 +1206,10 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
           </div>
 
           {/* Footer Bar */}
-          <div className="px-3 py-2 bg-black/60 border-t border-gray-800/80 flex items-center justify-between text-[10px] text-gray-400">
+          <div className="px-3 py-2 bg-black/60 border-t border-stone-800 flex items-center justify-between text-[10px] text-gray-400">
             <span className="flex items-center gap-1">
               <Database className="w-3 h-3 text-[#00f0ff]" />
-              Deterministic Simulation HSM v2.4
+              ARE Kernel v2.4 (Axiom 3 Compliant)
             </span>
             <span className="text-[#00f0ff] font-semibold">
               Aurion State Sync

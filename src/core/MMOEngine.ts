@@ -16,6 +16,8 @@ import { ResourceNode,
   LootDropEntity,
   MultiplayerNetStats,
   NPCCharacter,
+  NPCRelationshipMemory,
+  NPCReactionLogic,
   PartyMember,
   PlayerStats,
   Quest,
@@ -41,6 +43,7 @@ import { OpenWorldPlayer } from '../entities/OpenWorldPlayer';
 import { collisionSystem } from '../world/WorldCollisionSystem';
 import { MobManager } from '../entities/MobManager';
 import { LootDropManager } from '../entities/LootDropManager';
+import { npcMemoryService } from './NPCMemoryService';
 import { SimulatedRealmPlayers } from '../entities/SimulatedRealmPlayers';
 import { RemotePlayerManager } from '../entities/RemotePlayerManager';
 import { multiplayerClient } from '../engine/net/MultiplayerClient';
@@ -67,6 +70,33 @@ import { AutonomousNPCEconomy } from '../engine/economy/AutonomousNPCEconomy';
 import { NPCEconomyVisualizer } from '../engine/economy/NPCEconomyVisualizer';
 import { hierarchicalPathfinding } from '../engine/pathfinding/HierarchicalPathfinding';
 import { NPCMemoryType } from '../engine/ai/NPCShortTermMemory';
+import { areInvariantGuard } from '../engine/are/AREInvariantGuard';
+import { createWorldHashSnapshot, WorldHashSnapshot } from '../engine/are/WorldHashSnapshot';
+import { deterministicTickRecorder } from '../engine/are/DeterministicTickRecorder';
+import { cityLayoutCompiler } from '../engine/are/CityLayoutCompiler';
+import {
+  aurionTransitionRuntime,
+  AURION_EXPANSE_ZONE_ID,
+  AURION_TOWER_ZONE_ID,
+  AurionTransitionSnapshot,
+} from '../engine/aurion/AurionTransitionRuntime';
+import {
+  prepareMerchantNpcDecision,
+  merchantBootstrapMarkets,
+  HubId,
+  MerchantDecisionRequests,
+} from '../engine/aurion/merchantRules';
+import {
+  timestampedInputBuffer,
+  TimestampedUserCommand,
+  UserActionType,
+  TimestampedActionPayload,
+} from '../engine/net/TimestampedInputBuffer';
+import {
+  arelorianLingua,
+  PlayerUtteranceAnalysis,
+} from '../engine/lingua/ArelorianLinguaGrammar';
+
 
 
 interface ActiveProjectile {
@@ -125,6 +155,16 @@ export class MMOEngine {
   public instancedVegetation: InstancedVegetationSystem;
   public currentWeather: WeatherState;
   private ambientLight: THREE.AmbientLight;
+
+  // ARE Deterministic Kernel & Aurion Living World States
+  public latestWorldHashSnapshot: WorldHashSnapshot | null = null;
+  public latestTransitionSnapshot: AurionTransitionSnapshot | null = null;
+  public latestMerchantDecisions: Record<HubId, MerchantDecisionRequests | null> = {
+    observatory_threshold: null,
+    windhollow: null,
+    emberfall: null,
+    cinder_vault: null,
+  };
 
   // Companion Pet & Homestead Subsystems
   public activePet: CompanionPet | null = null;
@@ -603,8 +643,101 @@ export class MMOEngine {
     this.fixedLoop = new FixedTimestepLoop(20);
     this.npcEconomy = new AutonomousNPCEconomy();
     this.npcEconomyVisualizer = new NPCEconomyVisualizer(this.scene, this.npcEconomy);
-    this.fixedLoop.onTick = (_tick, fixedDelta) => {
+    this.fixedLoop.onTick = (tick, fixedDelta) => {
       this.npcEconomy.tick(fixedDelta);
+
+      // ARE Invariant Guard Axiom Check (deterministic Kappa=1000 and fixed seed)
+      const guardPayload = { kappa: 1000, deterministicSeed: 'aurion-genesis-seed-v1' };
+      areInvariantGuard.validateTick(guardPayload, tick);
+
+      if (!this.player) return;
+
+      // Extract deterministic entities for canonical SHA-256 world hash snapshot
+      const playerPos = this.player.position;
+      const players = [
+        {
+          id: 'hero_player_1',
+          name: 'Aurion Hero',
+          position: { x: Math.round(playerPos.x * 100) / 100, y: Math.round(playerPos.y * 100) / 100, z: Math.round(playerPos.z * 100) / 100 },
+          health: Math.round(this.player.stats.hp),
+          maxHealth: Math.round(this.player.stats.maxHp),
+          state: this.player.isMoving ? 'moving' : 'idle',
+        },
+      ];
+
+      const npcs = this.npcEconomy.npcs.slice(0, 16).map((npc) => ({
+        id: `npc_${npc.id}`,
+        name: npc.name,
+        position: { x: Math.round(npc.x * 100) / 100, y: 0, z: Math.round(npc.z * 100) / 100 },
+        state: npc.macroState,
+        role: 'merchant',
+      }));
+
+      const loot = (this.lootManager?.lootDrops ?? []).slice(0, 16).map((item) => ({
+        id: item.entity.id,
+        name: item.entity.item.name,
+        position: {
+          x: Math.round(item.entity.x * 100) / 100,
+          y: Math.round(item.entity.y * 100) / 100,
+          z: Math.round(item.entity.z * 100) / 100,
+        },
+      }));
+
+      const snapshot = createWorldHashSnapshot({
+        tick,
+        payload: guardPayload,
+        players,
+        npcs,
+        loot,
+        chunkSize: 64,
+      });
+      this.latestWorldHashSnapshot = snapshot;
+
+      // Record tick into deterministic ring buffer
+      deterministicTickRecorder.record({
+        tick,
+        payload: guardPayload,
+        worldHash: snapshot.worldHash,
+        worldSnapshot: snapshot,
+        guard: areInvariantGuard.getStatus(),
+        worldState: { players, npcs, loot },
+      });
+
+      // Aurion Zone Transition resolution
+      const appliedCount = aurionTransitionRuntime.applyReadyTransitions(tick);
+      if (appliedCount > 0) {
+        const transSnapshot = aurionTransitionRuntime.getSnapshot('hero_player_1');
+        this.latestTransitionSnapshot = transSnapshot;
+        if (transSnapshot.zoneId === AURION_EXPANSE_ZONE_ID) {
+          this.player.position.set(0, 0, 48);
+          this.player.group.position.set(0, 0, 48);
+          this.addChatMessage('system', 'Gatekeeper', '🌌 Deterministic Transition: You have passed through the Portal into the Aurion Expanse!');
+        } else {
+          this.player.position.set(0, 0, 0);
+          this.player.group.position.set(0, 0, 0);
+          this.addChatMessage('system', 'Return Stone', '🏛️ Deterministic Transition: You have touched the Return Stone and returned to the Observatory Threshold.');
+        }
+      }
+
+      // Aurion Living World 4-Hub Autonomous Merchant Economy (runs every 20 ticks = 1 second)
+      if (tick % 20 === 0) {
+        const hubs: HubId[] = ['observatory_threshold', 'windhollow', 'emberfall', 'cinder_vault'];
+        const resolutionIndex = Math.floor(tick / 20);
+        for (const hub of hubs) {
+          const decision = prepareMerchantNpcDecision({
+            worldSeed: 'aurion-genesis-seed-v1',
+            resolutionIndex,
+            regionId: hub,
+            prior: null,
+          });
+          this.latestMerchantDecisions[hub] = decision;
+        }
+      }
+
+      // Timestamped Input Buffer: Process deterministic tick commands
+      timestampedInputBuffer.processTick(tick, (cmd) => {
+        this.executeBufferedCommand(cmd);
+      });
     };
 
     this.ballisticPhysics = new BallisticSimulationSystem(this.scene);
@@ -741,6 +874,9 @@ export class MMOEngine {
 
     // 6. Bind User Controls & Resize Observer
     this.bindEvents();
+
+    // Restore persistent NPC memories and affection ratings from MariaDB server across sessions
+    npcMemoryService.loadPlayerNPCMemories('hero_player_1', this.npcs);
 
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => {
@@ -1027,10 +1163,10 @@ export class MMOEngine {
       this.castClassSkill(skillIndex);
     }
 
-    // Space: Shield / Dodge
-    if (e.code === 'Space') {
+    // Space or Shift: Evasive Dodge Roll with I-Frames
+    if (e.code === 'Space' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
       e.preventDefault();
-      this.castClassSkill(2); // trigger class shield/aoe
+      this.triggerPlayerDodge();
     }
 
     // Z: Mount Toggle
@@ -1311,9 +1447,37 @@ export class MMOEngine {
     }
   }
 
-  public castClassSkill(skillIndex: number) {
+  public triggerPlayerDodge(fromBuffer: boolean = false): boolean {
+    const moveX = (this.keysPressed['d'] || this.keysPressed['arrowright'] ? 1 : 0) - (this.keysPressed['a'] || this.keysPressed['arrowleft'] ? 1 : 0);
+    const moveZ = (this.keysPressed['s'] || this.keysPressed['arrowdown'] ? 1 : 0) - (this.keysPressed['w'] || this.keysPressed['arrowup'] ? 1 : 0);
+    
+    if (!fromBuffer) {
+      this.queueUserCommand('DODGE_ROLL', { dirX: moveX, dirZ: moveZ, speed: 1 });
+    }
+
+    const rolled = this.player.triggerDodgeRoll(moveX, moveZ);
+    if (rolled) {
+      soundSynth.playSkillCast('utility');
+      this.particleSystem.emit('teleport_warp', this.player.position, '#00f0ff', 0.9);
+      this.addFloatingText('💨 EVASIVE ROLL (I-FRAME)', this.player.position.x, this.player.position.y + 2.2, '#00f0ff', 'md');
+    }
+    return rolled;
+  }
+
+  public castClassSkill(skillIndex: number, fromBuffer: boolean = false) {
     const classDef = MMORPG_CLASSES[this.player.currentClassId];
     if (skillIndex < 0 || skillIndex >= classDef.skills.length) return;
+
+    if (!fromBuffer) {
+      this.queueUserCommand('CAST_SPELL', { skillIndex, spellId: classDef.skills[skillIndex].name });
+    }
+
+    // Action Buffering if currently mid-swing
+    if (this.player.isAttacking && this.player.attackAnimTimer > 0.05) {
+      this.player.queueSkill(skillIndex);
+      this.addFloatingText('⌛ Buffered Skill', this.player.position.x, this.player.position.y + 1.8, '#a78bfa', 'sm');
+      return;
+    }
 
     const skill = classDef.skills[skillIndex];
     if (skill.currentCooldown > 0) {
@@ -1391,6 +1555,14 @@ export class MMOEngine {
 
       this.applyDamageToMob(mob.id, totalDmg, isCrit);
     });
+
+    // Check if any friendly/neutral NPCs were struck in the cleave arc
+    for (const npc of this.npcs) {
+      const dist = Math.hypot(npc.x - hitCenter.x, npc.z - hitCenter.z);
+      if (dist < 4.0) {
+        this.processNPCEvent(npc.id, 'attack', { damage: skill.damage });
+      }
+    }
   }
 
   private executeProjectileSkill(skill: ClassSkill) {
@@ -1481,6 +1653,14 @@ export class MMOEngine {
 
           this.applyDamageToMob(mob.id, totalDmg, isCrit);
         });
+
+        // Check if any NPCs were caught in the splash blast
+        for (const npc of this.npcs) {
+          const dist = Math.hypot(npc.x - hitPoint.x, npc.z - hitPoint.z);
+          if (dist < splashRad) {
+            this.processNPCEvent(npc.id, 'attack', { damage: dmg });
+          }
+        }
       }
     );
   }
@@ -1619,8 +1799,54 @@ export class MMOEngine {
     const result = this.mobManager.damageMob(mobId, finalDamage, 'hero_player_1', isTank, 'Hero Player');
     if (!result.mob) return;
 
-    // Track combo sequence for the player's active weapon
+    // Process Elemental Synergy & Resistances
     const activeWep = this.player.getActiveWeaponType();
+    let dmgType: 'physical' | 'arcane' | 'fire' | 'frost' | 'electric' | 'nature' = 'physical';
+    if (this.player.currentClassId === 'mage') {
+      dmgType = Math.random() < 0.5 ? 'arcane' : 'frost';
+    } else if (this.player.currentClassId === 'engineer') {
+      dmgType = 'fire';
+    } else if (this.player.currentClassId === 'ranger') {
+      dmgType = 'nature';
+    } else if (activeWep === 'staff') {
+      dmgType = 'arcane';
+    }
+
+    const synergyRes = this.elementalSynergyEngine.processSkillHit(
+      mobId,
+      result.mob.name,
+      { x: result.mob.x, y: result.mob.y, z: result.mob.z },
+      finalDamage,
+      dmgType,
+      isCrit || this.player.currentClassId === 'knight',
+      this.currentWeather?.type === 'aether_rain',
+      (radius) => this.mobManager.getNearbyMobs(result.mob!.x, result.mob!.z, radius).map((m) => ({ id: m.id, x: m.x, z: m.z }))
+    );
+
+    finalDamage = synergyRes.modifiedDamage;
+
+    if (synergyRes.bonusFloatingTags) {
+      synergyRes.bonusFloatingTags.forEach((t) => {
+        this.addFloatingText(t.tag, result.mob!.x, result.mob!.y + 2.6, t.color, 'lg');
+      });
+    }
+
+    if (synergyRes.synergyTriggered) {
+      const syn = synergyRes.synergyTriggered;
+      this.combatMetricsTracker.recordSynergy(syn.name, syn.damage, syn.targetCount);
+      this.particleSystem.emit('beacon_activate', { x: syn.x, y: syn.y + 0.8, z: syn.z }, syn.color, 1.6);
+      this.addFloatingText(`✨ ${syn.name}!`, syn.x, syn.y + 2.8, syn.color, 'xl');
+
+      const nearby = this.mobManager.getNearbyMobs(syn.x, syn.z, 6.0);
+      nearby.forEach((m) => {
+        if (m.id !== mobId) {
+          this.applyDamageToMob(m.id, syn.damage, false);
+        }
+      });
+    }
+
+    // Record combat metrics
+    this.combatMetricsTracker.recordDamageDealt(finalDamage, isCrit, result.mob.name);
     this.recordComboHit(finalDamage, isCrit, activeWep);
 
     // Broadcast combat hit to realm peers
@@ -1837,6 +2063,9 @@ export class MMOEngine {
     });
   }
 
+  private lastPlayerChatText: string = '';
+  private lastPlayerChatTime: number = 0;
+
   public addChatMessage(
     channel: ChatMessage['channel'],
     sender: string,
@@ -1857,6 +2086,280 @@ export class MMOEngine {
     }
   }
 
+  public sendPlayerChat(text: string, channel: ChatMessage['channel'] = 'all'): PlayerUtteranceAnalysis {
+    const currentTick = this.fixedLoop.getMetrics().currentTick;
+    this.lastPlayerChatText = text;
+    this.lastPlayerChatTime = performance.now();
+
+    // 1. Analyze semantic intent with Arelorian Lingua Grammar
+    const analysis = arelorianLingua.analyzeUtterance(text, currentTick);
+
+    // 2. Post user chat message
+    this.addChatMessage(channel, 'Hero', text, true);
+
+    // 3. Locate closest nearby NPC within overhearing radius
+    let closestNPC: NPCCharacter | null = null;
+    let closestDist = Infinity;
+    for (const npc of this.npcs) {
+      const dist = Math.hypot(npc.x - this.player.position.x, npc.z - this.player.position.z);
+      if (dist < 18.0 && dist < closestDist) {
+        closestDist = dist;
+        closestNPC = npc;
+      }
+    }
+
+    if (closestNPC) {
+      let role: 'guard' | 'merchant' | 'mystic' | 'citizen' = 'citizen';
+      const title = (closestNPC.title || '').toLowerCase();
+      const name = (closestNPC.name || '').toLowerCase();
+      if (title.includes('wache') || title.includes('guard') || title.includes('sentinel') || title.includes('ritter') || name.includes('wache')) {
+        role = 'guard';
+      } else if (title.includes('händler') || title.includes('merchant') || title.includes('schmied') || title.includes('trader') || name.includes('händler')) {
+        role = 'merchant';
+      } else if (title.includes('mystik') || title.includes('magier') || title.includes('orakel') || title.includes('astral')) {
+        role = 'mystic';
+      }
+
+      const reaction = arelorianLingua.generateNPCReaction(closestNPC.name, role, analysis);
+
+      setTimeout(() => {
+        if (!closestNPC) return;
+        this.addChatMessage('all', `${closestNPC.name} (${closestNPC.title || role.toUpperCase()})`, reaction.dialogueText);
+        
+        let textColor = '#e2e8f0';
+        if (reaction.posture === 'ALERT_GUARDS' || reaction.posture === 'DEFENSIVE') {
+          textColor = '#ef4444';
+          soundSynth.playCombatEngage();
+        } else if (reaction.posture === 'FRIENDLY') {
+          textColor = '#10b981';
+          soundSynth.playNpcInteract();
+        } else if (reaction.posture === 'SUSPICIOUS') {
+          textColor = '#fbbf24';
+        }
+
+        this.addFloatingText(
+          reaction.runicSubtext.slice(0, 32),
+          closestNPC.x,
+          closestNPC.y + 3.2,
+          textColor,
+          'md'
+        );
+      }, 350);
+    }
+
+    return analysis;
+  }
+
+  /**
+   * Processes player attack and trade events against an NPC, triggers reactionLogic,
+   * and updates the NPC's memory dictionary to dynamically influence future dialogue and behavior.
+   */
+  public processNPCEvent(
+    npcIdOrNpc: string | NPCCharacter,
+    eventType: 'attack' | 'trade' | 'crime' | 'chat',
+    eventData?: { damage?: number; goldAmount?: number; itemName?: string; details?: string }
+  ): NPCRelationshipMemory | null {
+    const npc =
+      typeof npcIdOrNpc === 'string'
+        ? this.npcs.find((n) => n.id === npcIdOrNpc) ||
+          (this.nearbyNPC && this.nearbyNPC.id === npcIdOrNpc ? this.nearbyNPC : null)
+        : npcIdOrNpc;
+
+    if (!npc) return null;
+
+    // Ensure memory dictionary exists
+    if (!npc.memory) {
+      npc.memory = {
+        reputation: 0,
+        timesInteracted: 0,
+        tradesCompleted: 0,
+        crimesWitnessed: 0,
+        attacksSuffered: 0,
+        totalGoldTraded: 0,
+        dynamicDialogueHistory: [],
+        customFlags: {},
+        lastConversationTimestamp: new Date().toLocaleTimeString(),
+      };
+    }
+
+    const memory = npc.memory;
+    const reaction = npc.reactionLogic || {};
+    const now = Date.now();
+    memory.lastEventTimestamp = now;
+    memory.lastConversationTimestamp = new Date().toLocaleTimeString();
+
+    if (eventType === 'attack') {
+      const repLoss = reaction.reputationChangeOnAttack ?? -25;
+      memory.reputation = Math.max(-100, Math.min(100, memory.reputation + repLoss));
+      memory.attacksSuffered = (memory.attacksSuffered || 0) + 1;
+      memory.crimesWitnessed = (memory.crimesWitnessed || 0) + 1;
+      memory.lastEvent = 'attack';
+
+      // Pass event to NPCMemoryService for emotional context & affection calculation
+      npcMemoryService.processInteractionEvent(npc, 'attack', {
+        damage: eventData?.damage,
+        utteranceText: eventData?.details || `Angriff Verrat Feind ${npc.name}`,
+      });
+
+      // Update mood based on hostile threshold
+      const hostileLimit = reaction.hostileThreshold ?? -20;
+      if (memory.reputation <= hostileLimit) {
+        npc.mood = 'hostile';
+      } else if (memory.reputation < 15) {
+        npc.mood = 'suspicious';
+      }
+
+      // Select reactive dialogue deterministically
+      const customLines = reaction.onAttackedDialogue;
+      let chosenLine: string;
+      if (customLines && customLines.length > 0) {
+        const lineIdx = (memory.attacksSuffered - 1) % customLines.length;
+        chosenLine = customLines[lineIdx];
+      } else {
+        const roleTitle = (npc.title || npc.role || '').toLowerCase();
+        if (roleTitle.includes('guard') || roleTitle.includes('wache') || roleTitle.includes('captain')) {
+          chosenLine = `Halt im Namen von Aethelgard! Du hast mich angegriffen (Vorfall #${memory.attacksSuffered})! Die Eisenwache wird dich nicht verschonen!`;
+        } else if (
+          roleTitle.includes('trader') ||
+          roleTitle.includes('händler') ||
+          roleTitle.includes('builder') ||
+          roleTitle.includes('architect')
+        ) {
+          chosenLine = `Waffen weg! Was fällt dir ein, einen friedlichen Bürger zu attackieren?! Ich verlange Schadensersatz!`;
+        } else if (roleTitle.includes('outlaw') || roleTitle.includes('shadow')) {
+          chosenLine = `Du ziehst die Klinge gegen mich? Ein törichter Fehler. Die Schatten vergessen keinen Verrat.`;
+        } else {
+          chosenLine = `Wie kannst du es wagen, mich anzugreifen?! Meine Erinnerung an diesen Verrat verblasst nicht so schnell!`;
+        }
+      }
+
+      if (!memory.dynamicDialogueHistory) memory.dynamicDialogueHistory = [];
+      memory.dynamicDialogueHistory.unshift(`[Angriff #${memory.attacksSuffered}] "${chosenLine}"`);
+      if (memory.dynamicDialogueHistory.length > 12) memory.dynamicDialogueHistory.pop();
+
+      // Prepend dynamic line to NPC's available dialogue options
+      if (!npc.dialogue.includes(chosenLine)) {
+        npc.dialogue = [chosenLine, ...npc.dialogue.slice(0, 3)];
+      }
+
+      // Visual and audio feedback
+      this.addFloatingText(
+        `⚠️ RUF: ${repLoss} (${npc.mood.toUpperCase()})`,
+        npc.x,
+        npc.y + 3.4,
+        '#ef4444',
+        'lg',
+        true
+      );
+      this.addChatMessage(
+        'system',
+        npc.name,
+        `[Beziehung verschlechtert] Dein Ruf bei ${npc.name} sank auf ${memory.reputation}/100 (${npc.mood}).`
+      );
+      soundSynth.playCombatEngage();
+
+      // Contextual semantic learning for Lingua memory
+      const currentTick = this.fixedLoop.getMetrics().currentTick;
+      arelorianLingua.learnFromContextualUtterance(
+        `Angriff Verrat Feind ${npc.name}`,
+        'COMBAT_ATTACK',
+        currentTick
+      );
+
+      reaction.onEvent?.('attack', npc, { damage: eventData?.damage, isHostile: true });
+    } else if (eventType === 'trade') {
+      const affinity = reaction.tradeAffinityMultiplier ?? 1.2;
+      const baseRep = reaction.reputationChangeOnTrade ?? 8;
+      const repGain = Math.round(baseRep * affinity);
+      memory.reputation = Math.max(-100, Math.min(100, memory.reputation + repGain));
+      memory.tradesCompleted = (memory.tradesCompleted || 0) + 1;
+      memory.timesInteracted = (memory.timesInteracted || 0) + 1;
+      memory.totalGoldTraded = (memory.totalGoldTraded || 0) + (eventData?.goldAmount || 0);
+      memory.lastEvent = 'trade';
+
+      // Pass event to NPCMemoryService for emotional context & affection calculation
+      npcMemoryService.processInteractionEvent(npc, 'trade', {
+        goldAmount: eventData?.goldAmount,
+        itemName: eventData?.itemName,
+        utteranceText: eventData?.details || `Handel Gold Kauf Tausch ${npc.name}`,
+      });
+
+      // Update mood based on friendly and exalted thresholds
+      const exaltedLimit = reaction.exaltedThreshold ?? 70;
+      const friendlyLimit = reaction.friendlyThreshold ?? 30;
+      if (memory.reputation >= exaltedLimit) {
+        npc.mood = 'ecstatic';
+      } else if (memory.reputation >= friendlyLimit) {
+        npc.mood = 'friendly';
+      } else if (memory.reputation >= 0) {
+        npc.mood = 'neutral';
+      }
+
+      // Select reactive dialogue deterministically
+      const customLines = reaction.onTradeDialogue;
+      let chosenLine: string;
+      if (customLines && customLines.length > 0) {
+        const lineIdx = (memory.tradesCompleted - 1) % customLines.length;
+        chosenLine = customLines[lineIdx];
+      } else {
+        const itemName = eventData?.itemName ? `[${eventData.itemName}]` : 'diesen Handel';
+        if (memory.reputation >= exaltedLimit) {
+          chosenLine = `Ein ehrenhafter Verbündeter! Für deine Treue (${memory.tradesCompleted} getätigte Abschlüsse) biete ich stets meine erlesensten Waren.`;
+        } else if (memory.reputation >= friendlyLimit) {
+          chosenLine = `Vielen Dank für ${itemName}! Stammkunden wie du halten unsere Enklave am Leben.`;
+        } else {
+          chosenLine = `Ein solider Tausch. Solange du Gold bringst, bist du in ${npc.zone} jederzeit willkommen.`;
+        }
+      }
+
+      if (!memory.dynamicDialogueHistory) memory.dynamicDialogueHistory = [];
+      memory.dynamicDialogueHistory.unshift(`[Handel #${memory.tradesCompleted}] "${chosenLine}"`);
+      if (memory.dynamicDialogueHistory.length > 12) memory.dynamicDialogueHistory.pop();
+
+      // Prepend dynamic line to NPC dialogue
+      if (!npc.dialogue.includes(chosenLine)) {
+        npc.dialogue = [chosenLine, ...npc.dialogue.slice(0, 3)];
+      }
+
+      // Visual and audio feedback
+      this.addFloatingText(
+        `✨ RUF: +${repGain} (${npc.mood.toUpperCase()})`,
+        npc.x,
+        npc.y + 3.4,
+        '#10b981',
+        'md'
+      );
+      this.addChatMessage(
+        'system',
+        npc.name,
+        `[Beziehung gestärkt] Dein Ruf bei ${npc.name} stieg auf ${memory.reputation}/100 (${npc.mood}).`
+      );
+      soundSynth.playItemPickup();
+
+      // Contextual semantic learning for Lingua memory
+      const currentTick = this.fixedLoop.getMetrics().currentTick;
+      arelorianLingua.learnFromContextualUtterance(
+        `Handel Gold Kauf Tausch ${npc.name}`,
+        'TRADE_COMMERCE',
+        currentTick
+      );
+
+      reaction.onEvent?.('trade', npc, { amount: eventData?.goldAmount, itemName: eventData?.itemName });
+    } else if (eventType === 'crime') {
+      memory.crimesWitnessed = (memory.crimesWitnessed || 0) + 1;
+      const repLoss = reaction.crimeTolerance === 'high' ? -5 : reaction.crimeTolerance === 'moderate' ? -15 : -30;
+      memory.reputation = Math.max(-100, Math.min(100, memory.reputation + repLoss));
+      memory.lastEvent = 'crime';
+      if (memory.reputation <= (reaction.hostileThreshold ?? -20)) {
+        npc.mood = 'hostile';
+      }
+      this.addFloatingText(`🚨 VERBRECHEN BEOBACHTET (${repLoss})`, npc.x, npc.y + 3.4, '#f59e0b', 'md');
+      reaction.onEvent?.('crime', npc, { isHostile: true });
+    }
+
+    return memory;
+  }
+
   public recordComboHit(damage: number, isCrit: boolean, weaponType: WeaponType) {
     const now = performance.now();
     this.comboState.count += 1;
@@ -1867,6 +2370,12 @@ export class MMOEngine {
     this.comboState.recentHits += 1;
     if (this.comboState.count > this.comboState.maxCombo) {
       this.comboState.maxCombo = this.comboState.count;
+    }
+
+    // Contextual semantic learning: words spoken immediately before/during attacks get associated with COMBAT_ATTACK
+    if (this.lastPlayerChatText && now - this.lastPlayerChatTime < 15000) {
+      const currentTick = this.fixedLoop.getMetrics().currentTick;
+      arelorianLingua.learnFromContextualUtterance(this.lastPlayerChatText, 'COMBAT_ATTACK', currentTick);
     }
 
     // Dynamic Multiplier & Rank by weapon archetype
@@ -2177,6 +2686,13 @@ export class MMOEngine {
         // Mob attacks target: Hero or Simulated Player
         if (!targetId || targetId === 'hero_player_1') {
           const res = this.player.takeDamage(dmg);
+          if (res.dodged) {
+            this.combatMetricsTracker.recordDamageTaken(0, mob.name, true, res.iFrame);
+            this.addFloatingText(res.iFrame ? '✨ I-FRAME DODGE!' : '💨 DODGED!', this.player.position.x, this.player.position.y + 2.2, '#38bdf8', 'lg');
+            return;
+          }
+
+          this.combatMetricsTracker.recordDamageTaken(res.damageTaken, mob.name);
           soundSynth.playHitSound();
 
           // Directional damage hit indicator relative to camera orientation
@@ -2248,6 +2764,109 @@ export class MMOEngine {
         this.targetMob = null;
       }
     }
+
+    // 5.2 Action Buffering: Fire queued skill as soon as character attack animation ends
+    if (!this.player.isAttacking && this.player.bufferedSkillIndex !== null) {
+      const buffered = this.player.clearBufferedSkill();
+      if (buffered !== null) {
+        this.castClassSkill(buffered);
+      }
+    }
+
+    // 5.3 Update Elemental Synergies & DoT ticks
+    this.elementalSynergyEngine.update(delta, (entityId, dotDmg, type, color) => {
+      const mobVisual = this.mobManager.mobs.find((m) => m.entity.id === entityId);
+      if (mobVisual && mobVisual.entity.hp > 0) {
+        mobVisual.entity.hp = Math.max(0, mobVisual.entity.hp - dotDmg);
+        this.addFloatingText(`-${dotDmg} ${type}`, mobVisual.entity.x, mobVisual.entity.y + 1.8, color, 'sm');
+        this.combatMetricsTracker.recordDamageDealt(dotDmg, false, mobVisual.entity.name, type);
+        if (mobVisual.entity.hp <= 0) {
+          this.mobManager.damageMob(entityId, 1, 'hero_player_1');
+        }
+      }
+    });
+
+    // 5.4 Update Real-Time Combat Metrics & DPS Meter
+    this.combatMetricsTracker.update(delta);
+
+    // 5.5 Update Boss / Elite Telegraphs & Collision Resolution
+    this.telegraphVisualizer.update(delta, (telegraph) => {
+      const dist = Math.hypot(this.player.position.x - telegraph.x, this.player.position.z - telegraph.z);
+      let hitPlayer = false;
+      if (telegraph.type === 'circle') {
+        hitPlayer = dist <= telegraph.radius;
+      } else if (telegraph.type === 'cone') {
+        if (dist <= telegraph.radius) {
+          const angleToPlayer = Math.atan2(this.player.position.x - telegraph.x, this.player.position.z - telegraph.z);
+          let diff = angleToPlayer - (telegraph.angle || 0);
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          const halfArc = (telegraph.arcAngle || Math.PI * 0.5) / 2;
+          hitPlayer = Math.abs(diff) <= halfArc;
+        }
+      } else {
+        const localX = (this.player.position.x - telegraph.x) * Math.cos(-(telegraph.angle || 0)) - (this.player.position.z - telegraph.z) * Math.sin(-(telegraph.angle || 0));
+        const localZ = (this.player.position.x - telegraph.x) * Math.sin(-(telegraph.angle || 0)) + (this.player.position.z - telegraph.z) * Math.cos(-(telegraph.angle || 0));
+        const halfW = (telegraph.width || 3.5) / 2;
+        hitPlayer = Math.abs(localX) <= halfW && localZ >= 0 && localZ <= (telegraph.length || 12.0);
+      }
+
+      if (hitPlayer) {
+        const res = this.player.takeDamage(telegraph.damage);
+        if (res.dodged) {
+          this.combatMetricsTracker.recordDamageTaken(0, telegraph.sourceName || 'Boss Telegraph', true, res.iFrame);
+          this.addFloatingText(res.iFrame ? '✨ I-FRAME DODGE!' : '💨 DODGED!', this.player.position.x, this.player.position.y + 2.2, '#38bdf8', 'lg');
+        } else {
+          this.combatMetricsTracker.recordDamageTaken(res.damageTaken, telegraph.sourceName || 'Boss Telegraph');
+          soundSynth.playHitSound();
+          this.particleSystem.emit('fire_impact', this.player.position, telegraph.color || '#ef4444', 1.8);
+          this.addFloatingText(`💥 TELEGRAPH -${res.damageTaken}`, this.player.position.x, this.player.position.y + 2.5, '#ef4444', 'xl');
+          if (res.isDead) {
+            this.handlePlayerDeath();
+          }
+        }
+      }
+      this.particleSystem.emit('magic_impact', { x: telegraph.x, y: telegraph.y + 0.5, z: telegraph.z }, telegraph.color || '#ef4444', 2.0);
+    });
+
+    // 5.6 Boss / Elite Telegraph Casting Routine
+    this.mobManager.mobs.forEach((visual) => {
+      const mob = visual.entity;
+      if ((mob.isBoss || mob.isElite) && mob.isAggroed && mob.hp > 0) {
+        (mob as any).telegraphCd = ((mob as any).telegraphCd || (mob.isBoss ? 7.0 : 11.0)) - delta;
+        if ((mob as any).telegraphCd <= 0) {
+          (mob as any).telegraphCd = mob.isBoss ? 8.5 : 14.0;
+          const targetX = this.player.position.x;
+          const targetZ = this.player.position.z;
+          const angleToTarget = Math.atan2(targetX - mob.x, targetZ - mob.z);
+          const tType: 'circle' | 'cone' | 'rectangle' = mob.isBoss
+            ? (Math.random() < 0.4 ? 'circle' : Math.random() < 0.7 ? 'cone' : 'rectangle')
+            : 'circle';
+
+          const telegraph: BossTelegraph = {
+            id: `tele_${mob.id}_${Date.now()}`,
+            sourceMobId: mob.id,
+            sourceName: mob.name,
+            skillName: mob.isBoss ? 'Cataclysmic Slam' : 'Arcane Blast',
+            type: tType,
+            x: tType === 'circle' ? targetX : mob.x,
+            y: 0,
+            z: tType === 'circle' ? targetZ : mob.z,
+            radius: tType === 'circle' ? 4.8 : 7.5,
+            arcAngle: Math.PI * 0.6,
+            width: 3.5,
+            length: 12.0,
+            angle: angleToTarget,
+            castTime: 0,
+            totalCastTime: mob.isBoss ? 2.4 : 3.0,
+            damage: Math.round(mob.damage * (mob.isBoss ? 1.5 : 1.25)),
+            color: mob.isBoss ? '#ef4444' : '#f59e0b',
+          };
+          this.telegraphVisualizer.addTelegraph(telegraph);
+          this.addFloatingText(`⚠️ ${mob.name} prepares ${tType.toUpperCase()}!`, mob.x, mob.y + 3.0, '#ef4444', 'lg');
+        }
+      }
+    });
 
     // 6. Update Loot Drops & Check nearby interaction prompts (with Auto-Loot for common items)
     this.lootManager.update(delta);
@@ -2556,6 +3175,8 @@ export class MMOEngine {
         npcs: this.npcs,
         comboState: { ...this.comboState },
         directionalIndicators: [...this.directionalIndicators],
+        dpsMeterStats: this.combatMetricsTracker.getStats(),
+        combatLogs: this.combatMetricsTracker.getStats().recentLogs,
       });
     }
   }
@@ -2989,6 +3610,96 @@ export class MMOEngine {
 
   public observePlayerEquipment(callback: (equipment: EquipmentState) => void): () => void {
     return this.player.addEquipmentListener(callback);
+  }
+
+  public triggerDeterministicZoneTransition(): void {
+    if (!this.player) return;
+    const playerPos = this.player.position;
+    const currentTick = this.fixedLoop.getMetrics().currentTick;
+    const requestId = `trans_req_${currentTick}_${Date.now()}`;
+    const res = aurionTransitionRuntime.requestTransition({
+      playerId: 'hero_player_1',
+      requestId,
+      sequenceId: currentTick + 1,
+      acceptedAtTick: currentTick,
+      playerPosition: { x: playerPos.x, y: playerPos.z },
+    });
+
+    if (res.ok) {
+      this.particleSystem.emit('beacon_activate', this.player.position, '#00f0ff', 2.5);
+      soundSynth.playLevelUp();
+      this.addFloatingText('🌀 DETERMINISTIC PORTAL QUEUED', playerPos.x, playerPos.y + 2.8, '#00f0ff', 'xl');
+      this.addChatMessage('system', 'Gatekeeper', `Portal activation queued for deterministic tick resolution (Sequence #${currentTick + 1}).`);
+    } else {
+      this.addFloatingText(`Portal Error: ${res.code}`, playerPos.x, playerPos.y + 2.0, '#ef4444', 'md');
+    }
+  }
+
+  public compileCityLayout(sector = 0) {
+    const npcs = this.npcEconomy.npcs.map((npc) => ({
+      id: `npc_${npc.id}`,
+      type: 'building',
+      role: 'forge',
+      position: { x: npc.x, y: npc.z, z: 0 },
+    }));
+    return cityLayoutCompiler.compileSector(npcs, sector);
+  }
+
+  public queueUserCommand(
+    actionType: UserActionType,
+    payload: TimestampedActionPayload,
+    forcedTargetTick?: number
+  ): TimestampedUserCommand {
+    const currentTick = this.fixedLoop.getMetrics().currentTick;
+    return timestampedInputBuffer.enqueueCommand(
+      'hero_player_1',
+      actionType,
+      payload,
+      currentTick,
+      forcedTargetTick
+    );
+  }
+
+  public executeBufferedCommand(cmd: TimestampedUserCommand): void {
+    if (!this.player) return;
+    switch (cmd.actionType) {
+      case 'CAST_SPELL': {
+        const payload = cmd.payload as { skillIndex?: number };
+        if (payload && typeof payload.skillIndex === 'number') {
+          this.castClassSkill(payload.skillIndex, true);
+        }
+        break;
+      }
+      case 'DODGE_ROLL': {
+        this.triggerPlayerDodge(true);
+        break;
+      }
+      case 'ZONE_TRANSITION': {
+        this.triggerDeterministicZoneTransition();
+        break;
+      }
+      case 'INTERACT': {
+        this.interactNearby();
+        break;
+      }
+      case 'USE_ITEM': {
+        const payload = cmd.payload as { itemId?: string };
+        if (payload?.itemId) {
+          const item = this.player.inventory.find((i) => i.id === payload.itemId);
+          if (item) {
+            this.equipItem(item);
+          }
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  public getInputBufferStats() {
+    const currentTick = this.fixedLoop.getMetrics().currentTick;
+    return timestampedInputBuffer.getStats(currentTick);
   }
 
   private handleResize = () => {
