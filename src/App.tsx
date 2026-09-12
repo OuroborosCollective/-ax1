@@ -28,7 +28,13 @@ import {
   DirectionalDamageIndicator,
   DPSMeterStats,
   CombatLogEntry,
+  LeylineRiftEvent,
+  WorldEventAlert,
+  DungeonInstanceProgress,
 } from './types';
+import { WorldEventOverlay } from './components/WorldEventOverlay';
+import { DungeonInstanceOverlay } from './components/DungeonInstanceOverlay';
+import { soundSynth } from './audio/SoundSynthesizer';
 import { GameHUD } from './components/GameHUD';
 import { InventoryModal } from './components/InventoryModal';
 import { CharacterModal } from './components/CharacterModal';
@@ -46,6 +52,7 @@ import { NPCEconomyModal } from './components/NPCEconomyModal';
 import { DeterminismDebugOverlay } from './components/DeterminismDebugOverlay';
 import { GuildManagementModal } from './components/GuildManagementModal';
 import { HomesteadBuilderModal } from './components/HomesteadBuilderModal';
+import { AuctionHouseModal } from './components/AuctionHouseModal';
 import { DEFAULT_PROFESSION_SKILLS } from './data/professionsData';
 import { HOMESTEAD_BLUEPRINTS } from './data/mmorpgData';
 import { syncManager } from './core/SyncManager';
@@ -101,6 +108,10 @@ export default function App() {
   const [directionalIndicators, setDirectionalIndicators] = useState<DirectionalDamageIndicator[]>([]);
   const [dpsMeterStats, setDpsMeterStats] = useState<DPSMeterStats | undefined>(undefined);
   const [combatLogs, setCombatLogs] = useState<CombatLogEntry[]>([]);
+  const [activeRifts, setActiveRifts] = useState<LeylineRiftEvent[]>([]);
+  const [recentAlerts, setRecentAlerts] = useState<WorldEventAlert[]>([]);
+  const [dungeonProgress, setDungeonProgress] = useState<DungeonInstanceProgress | null>(null);
+  const [playerCoords, setPlayerCoords] = useState<{ x: number; z: number }>({ x: 0, z: 0 });
 
   // Modals States
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
@@ -110,6 +121,7 @@ export default function App() {
   const [isQuestLogOpen, setIsQuestLogOpen] = useState(false);
   const [isMapOpen, setIsMapOpen] = useState(false);
   const [isPartyOpen, setIsPartyOpen] = useState(false);
+  const [isAuctionHouseOpen, setIsAuctionHouseOpen] = useState(false);
   const [isCraftingOpen, setIsCraftingOpen] = useState(false);
   const [isDungeonFinderOpen, setIsDungeonFinderOpen] = useState(false);
   const [professions, setProfessions] = useState<Record<ProfessionId, ProfessionSkill>>(DEFAULT_PROFESSION_SKILLS);
@@ -186,6 +198,10 @@ export default function App() {
         if (state.directionalIndicators) setDirectionalIndicators([...state.directionalIndicators]);
         if (state.dpsMeterStats) setDpsMeterStats({ ...state.dpsMeterStats });
         if (state.combatLogs) setCombatLogs([...state.combatLogs]);
+        if (state.activeRifts) setActiveRifts([...state.activeRifts]);
+        if (state.recentAlerts) setRecentAlerts([...state.recentAlerts]);
+        if (state.dungeonProgress !== undefined) setDungeonProgress(state.dungeonProgress ? { ...state.dungeonProgress } : null);
+        if (state.playerCoords) setPlayerCoords({ ...state.playerCoords });
       };
 
 
@@ -249,6 +265,12 @@ export default function App() {
       } else if (key === 'p') {
         e.preventDefault();
         setIsPartyOpen((prev) => !prev);
+      } else if (key === 'g') {
+        e.preventDefault();
+        setIsGuildOpen((prev) => !prev);
+      } else if (key === 't') {
+        e.preventDefault();
+        setIsAuctionHouseOpen((prev) => !prev);
       } else if (key === 'f1') {
         e.preventDefault();
         setIsServerConsoleOpen((prev) => !prev);
@@ -611,6 +633,52 @@ export default function App() {
     [stats.gold]
   );
 
+  const handleCollectRiftLoot = useCallback((riftId: string) => {
+    if (!engineRef.current) return;
+    const rewards = engineRef.current.worldEventManager.collectRiftLoot(riftId);
+    if (rewards) {
+      const updatedInv = rewards.item ? [...engineRef.current.player.inventory, rewards.item] : [...engineRef.current.player.inventory];
+      engineRef.current.player.inventory = updatedInv;
+      setInventory(updatedInv);
+      const newGold = stats.gold + rewards.gold;
+      engineRef.current.player.stats.gold = newGold;
+      engineRef.current.player.gainXp(rewards.xp);
+      setStats({ ...engineRef.current.player.stats });
+      engineRef.current.addFloatingText(`+${rewards.gold} Gold | +${rewards.xp} XP!`, engineRef.current.player.position.x, engineRef.current.player.position.y + 2.8, '#10b981', 'xl');
+      soundSynth.playLootPickup();
+    }
+  }, [stats.gold]);
+
+  const handleTrackRift = useCallback((rift: LeylineRiftEvent) => {
+    if (!engineRef.current) return;
+    const dist = Math.round(Math.hypot(engineRef.current.player.position.x - rift.coords.x, engineRef.current.player.position.z - rift.coords.z));
+    engineRef.current.addChatMessage('system', 'Leylinien-Kompass', `📍 Wegpunkt gesetzt auf [${rift.name}] bei Koordinaten (${Math.round(rift.coords.x)}, ${Math.round(rift.coords.z)}). Distanz: ${dist}m.`);
+    engineRef.current.addFloatingText(`📍 Ziel: ${rift.name} (${dist}m)`, engineRef.current.player.position.x, engineRef.current.player.position.y + 2.4, '#00f0ff', 'lg');
+  }, []);
+
+  const handleOpenDungeonRewardChest = useCallback(() => {
+    if (!engineRef.current) return;
+    const loot = engineRef.current.dungeonInstanceManager.openDungeonChest();
+    if (loot) {
+      const updatedInv = [...engineRef.current.player.inventory, ...loot.items];
+      engineRef.current.player.inventory = updatedInv;
+      setInventory(updatedInv);
+      const newGold = stats.gold + loot.gold;
+      engineRef.current.player.stats.gold = newGold;
+      engineRef.current.player.gainXp(loot.xp);
+      setStats({ ...engineRef.current.player.stats });
+      soundSynth.playLegendaryDrop();
+      engineRef.current.addFloatingText(`🎁 GEWÖLBE-SCHATZ GEÖFFNET! +${loot.gold} Gold, +${loot.xp} XP`, engineRef.current.player.position.x, engineRef.current.player.position.y + 3.0, '#f59e0b', 'xl');
+      engineRef.current.addChatMessage('party', 'Gewölbebelohnung', `🎁 Truhe geplündert: ${loot.items.map(i => `[${i.name}] (${i.rarity})`).join(', ')} sowie ${loot.gold} Gold und ${loot.xp} XP erhalten!`);
+    }
+  }, [stats.gold]);
+
+  const handleExitDungeon = useCallback(() => {
+    if (!engineRef.current) return;
+    engineRef.current.exitDungeon();
+    setDungeonProgress(null);
+  }, []);
+
   const handleSendMessage = useCallback((text: string, channel: ChatMessage['channel']) => {
     if (!engineRef.current) return;
 
@@ -698,6 +766,11 @@ export default function App() {
         <GameHUD
           playerStats={stats}
           currentClassId={currentClassId}
+          health={stats.hp}
+          maxHealth={stats.maxHp}
+          mana={stats.resource}
+          maxMana={stats.maxResource}
+          simPlayers={simPlayers || []}
           targetMob={targetMob}
           nearbyNPC={nearbyNPC}
           nearbyLoot={nearbyLoot}
@@ -727,6 +800,7 @@ export default function App() {
           onOpenMap={() => setIsMapOpen(true)}
           onOpenParty={() => setIsPartyOpen(true)}
           onOpenGuild={() => setIsGuildOpen(true)}
+          onOpenAuctionHouse={() => setIsAuctionHouseOpen(true)}
           onOpenServerConsole={() => setIsServerConsoleOpen(true)}
           onOpenEconomy={() => setIsEconomyOpen(true)}
           onOpenHomestead={() => setIsHomesteadOpen(true)}
@@ -822,6 +896,7 @@ export default function App() {
           onClose={() => setIsCharacterOpen(false)}
           stats={stats}
           currentClassId={currentClassId}
+          professions={professions}
           onAllocateStatPoint={handleAllocateStatPoint}
           onUnlockMilestoneSkill={handleUnlockMilestoneSkill}
           onEquipSkill={handleEquipSkill}
@@ -835,6 +910,10 @@ export default function App() {
           onClose={() => setIsClassSelectOpen(false)}
           currentClassId={currentClassId}
           onSelectClass={handleSelectClass}
+          stats={stats}
+          professions={professions}
+          onEquipSkill={handleEquipSkill}
+          onUnlockMilestoneSkill={handleUnlockMilestoneSkill}
         />
       </ErrorBoundary>
 
@@ -1086,6 +1165,28 @@ export default function App() {
           }}
         />
       </ErrorBoundary>
+
+      {/* Dynamic World Events: Leyline Rifts & Boss Alerts */}
+      <ErrorBoundary componentName="WorldEventOverlay">
+        <WorldEventOverlay
+          activeRifts={activeRifts}
+          recentAlerts={recentAlerts}
+          playerCoords={playerCoords}
+          onTrackRift={handleTrackRift}
+          onCollectRiftLoot={handleCollectRiftLoot}
+        />
+      </ErrorBoundary>
+
+      {/* Instanced Dungeons & Boss Phase Combat Overlay */}
+      {dungeonProgress && (
+        <ErrorBoundary componentName="DungeonInstanceOverlay">
+          <DungeonInstanceOverlay
+            instance={dungeonProgress}
+            onOpenRewardChest={handleOpenDungeonRewardChest}
+            onExitDungeon={handleExitDungeon}
+          />
+        </ErrorBoundary>
+      )}
     </main>
   );
 }

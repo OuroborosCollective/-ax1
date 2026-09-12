@@ -96,7 +96,7 @@ export class OpenWorldPlayer {
   public facingAngle: number = Math.PI;
   public targetAngle: number = Math.PI;
   public isMoving: boolean = false;
-  public baseMoveSpeed: number = 9.5;
+  public baseMoveSpeed: number = 5.7;
 
   // Active Buffs
   public isShieldActive: boolean = false;
@@ -1125,6 +1125,11 @@ export class OpenWorldPlayer {
     const armorFactor = this.stats.armor / (this.stats.armor + 120 + this.stats.level * 12);
     let effectiveDmg = amount * (1.0 - Math.min(0.85, armorFactor));
 
+    // 10-Level Milestone Armor Efficiency Bonus: +10% (+0.1) absorption per 10 armor mastery levels
+    const chestMastery = this.stats.armorMasteries?.chest?.level || 1;
+    const armorMilestoneBonus = Math.floor(chestMastery / 10) * 0.1;
+    effectiveDmg *= Math.max(0.2, 1.0 - armorMilestoneBonus);
+
     // Defense 100 Breakpoint (Unyielding Juggernaut): -15% total damage taken
     if (this.stats.attributes.defense >= 100) {
       effectiveDmg *= 0.85;
@@ -1149,6 +1154,9 @@ export class OpenWorldPlayer {
 
     effectiveDmg = Math.max(1, Math.round(effectiveDmg));
     this.stats.hp = Math.max(0, this.stats.hp - effectiveDmg);
+
+    // Learning-by-Doing for Armor: Gain armor mastery XP when absorbing attacks
+    this.gainArmorMasteryXp('chest', Math.max(4, Math.round(effectiveDmg * 0.15)));
 
     // Check Bulwark Aegis Trigger (< 30% HP)
     if (

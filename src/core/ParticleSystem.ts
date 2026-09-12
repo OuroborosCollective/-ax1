@@ -189,6 +189,103 @@ export class ParticleSystem {
     }
   }
 
+  /**
+   * Emit directional impact particles on critical hits aligned with the strike vector
+   */
+  public emitDirectionalImpactCrit(
+    pos: THREE.Vector3 | { x: number; y: number; z: number },
+    strikeDir: THREE.Vector3 | { x: number; y: number; z: number },
+    customColor?: string | number,
+    countMultiplier: number = 1.0
+  ) {
+    const basePos = new THREE.Vector3(pos.x, pos.y, pos.z);
+    const dir = new THREE.Vector3(strikeDir.x, strikeDir.y || 0, strikeDir.z).normalize();
+    if (dir.lengthSq() < 0.001) dir.set(0, 0, 1);
+
+    const baseColor = customColor !== undefined ? new THREE.Color(customColor) : new THREE.Color(0xfbbf24);
+    const goldColor = new THREE.Color(0xfbbf24);
+    const aurionCyan = new THREE.Color(0x00f0ff);
+
+    const count = Math.round(42 * countMultiplier);
+
+    // 1. High-velocity directional spark spray along strike trajectory
+    for (let i = 0; i < count; i++) {
+      if (this.particles.length >= this.maxParticles) break;
+
+      const spread = 0.5;
+      const spreadX = (Math.random() - 0.5) * spread;
+      const spreadY = (Math.random() - 0.25) * spread * 0.9;
+      const spreadZ = (Math.random() - 0.5) * spread;
+
+      const particleDir = dir.clone().add(new THREE.Vector3(spreadX, spreadY, spreadZ)).normalize();
+      const speed = 7.5 + Math.random() * 9.0;
+      const pColor = Math.random() > 0.35 ? goldColor.clone().lerp(baseColor, Math.random() * 0.6) : aurionCyan;
+
+      this.particles.push({
+        position: basePos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.3, (Math.random() - 0.5) * 0.3, (Math.random() - 0.5) * 0.3)),
+        velocity: particleDir.multiplyScalar(speed).add(new THREE.Vector3(0, 1.8 + Math.random() * 2.2, 0)),
+        acceleration: new THREE.Vector3(0, -14.0, 0),
+        color: pColor,
+        size: 0.45 + Math.random() * 0.45,
+        initialSize: 0.45 + Math.random() * 0.45,
+        alpha: 1.0,
+        initialAlpha: 1.0,
+        life: 0,
+        maxLife: 0.4 + Math.random() * 0.3,
+        rotation: Math.random() * Math.PI * 2,
+        rotSpeed: (Math.random() - 0.5) * 10.0,
+      });
+    }
+
+    // 2. Transverse slashing particle fan (perpendicular to strike vector)
+    const right = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
+    const fanCount = Math.round(22 * countMultiplier);
+    for (let i = 0; i < fanCount; i++) {
+      if (this.particles.length >= this.maxParticles) break;
+      const t = (i / fanCount - 0.5) * 2.0; // -1 to 1
+      const fanVel = right.clone().multiplyScalar(t * 6.0).add(dir.clone().multiplyScalar(3.0 + Math.random() * 2.0));
+      fanVel.y += (Math.random() - 0.2) * 2.8;
+
+      this.particles.push({
+        position: basePos.clone(),
+        velocity: fanVel,
+        acceleration: new THREE.Vector3(0, -9.0, 0),
+        color: goldColor.clone().offsetHSL((Math.random() - 0.5) * 0.08, 0, 0.1),
+        size: 0.5 + Math.random() * 0.3,
+        initialSize: 0.5 + Math.random() * 0.3,
+        alpha: 1.0,
+        initialAlpha: 1.0,
+        life: 0,
+        maxLife: 0.35 + Math.random() * 0.25,
+        rotation: Math.atan2(fanVel.x, fanVel.z),
+        rotSpeed: (Math.random() - 0.5) * 6.0,
+      });
+    }
+
+    // 3. Radial shockwave impact ring
+    const ringCount = Math.round(20 * countMultiplier);
+    for (let i = 0; i < ringCount; i++) {
+      if (this.particles.length >= this.maxParticles) break;
+      const angle = (i / ringCount) * Math.PI * 2;
+      const speed = 4.8 + Math.random() * 3.5;
+
+      this.particles.push({
+        position: basePos.clone().add(new THREE.Vector3(0, 0.15, 0)),
+        velocity: new THREE.Vector3(Math.cos(angle) * speed, 0.9 + Math.random() * 1.6, Math.sin(angle) * speed),
+        acceleration: new THREE.Vector3(0, -7.0, 0),
+        color: aurionCyan.clone().lerp(goldColor, Math.random() * 0.5),
+        size: 0.6 + Math.random() * 0.35,
+        initialSize: 0.6 + Math.random() * 0.35,
+        alpha: 1.0,
+        initialAlpha: 1.0,
+        life: 0,
+        maxLife: 0.48 + Math.random() * 0.2,
+        rotation: angle,
+        rotSpeed: 2.0,
+      });
+    }
+  }
+
   // --- Specialized Effect Generators ---
 
   private emitCombatHit(pos: THREE.Vector3, color: THREE.Color, count: number) {

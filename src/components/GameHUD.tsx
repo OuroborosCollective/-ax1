@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import {
+import { Coins, 
   Shield,
   Heart,
   Zap,
@@ -53,16 +53,23 @@ import {
   WeaponType,
   DPSMeterStats,
   CombatLogEntry,
+  SimulatedPlayer,
 } from '../types';
 import { MMORPG_CLASSES } from '../data/mmorpgData';
 import { MOB_ELEMENTAL_AFFINITIES } from '../data/combatProgressionData';
 import { soundSynth } from '../audio/SoundSynthesizer';
 import { VirtualJoystick } from './VirtualJoystick';
 import { MiniMap } from './MiniMap';
+import { getSkillMilestoneStats, getCombatMasteryMultiplier } from '../data/classlessProgression';
 
 interface GameHUDProps {
   playerStats: PlayerStats;
   currentClassId: CharacterClassId;
+  health: number;
+  maxHealth: number;
+  mana: number;
+  maxMana: number;
+  simPlayers: SimulatedPlayer[];
   targetMob: WorldMobEntity | null;
   nearbyNPC: NPCCharacter | null;
   nearbyLoot: LootDropEntity | null;
@@ -91,6 +98,7 @@ interface GameHUDProps {
   onOpenInventory: () => void;
   onOpenCrafting?: () => void;
   onOpenDungeonFinder?: () => void;
+  onOpenAuctionHouse?: () => void;
   onOpenCharacter: () => void;
   onOpenQuests: () => void;
   onOpenClasses: () => void;
@@ -111,37 +119,36 @@ interface GameHUDProps {
 export const GameHUD: React.FC<GameHUDProps> = ({
   playerStats,
   currentClassId,
+  health,
+  maxHealth,
+  mana,
+  maxMana,
   targetMob,
   nearbyNPC,
   nearbyLoot,
   quests,
   chatMessages,
   floatingTexts,
-  partyMembers = [],
+  simPlayers,
+  partyMembers,
   dayNightInfo,
   netStats,
-  activeBuffs = [],
+  activeBuffs,
   engineMetrics,
-  facingAngle = 0,
-  cameraYaw = 0,
-  activeMobs = [],
-  npcs = [],
+  facingAngle,
+  cameraYaw,
+  activeMobs,
+  npcs,
   comboState,
-  directionalIndicators = [],
-  autoLootEnabled = true,
-  onToggleAutoLoot,
-  pityCounters = {},
+  directionalIndicators,
   dpsMeterStats,
-  combatLogs = [],
-  onTriggerDodge,
-  onCastSkill,
-  onCycleTarget,
-  onVirtualMove,
+  combatLogs,
   onToggleMount,
   onInteract,
   onOpenInventory,
   onOpenCrafting,
   onOpenDungeonFinder,
+  onOpenAuctionHouse,
   onOpenCharacter,
   onOpenQuests,
   onOpenClasses,
@@ -152,7 +159,14 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   onOpenEconomy,
   onOpenDeterminismOverlay,
   onOpenHomestead,
+  autoLootEnabled,
+  onToggleAutoLoot,
+  pityCounters,
   onSendMessage,
+  onCycleTarget,
+  onCastSkill,
+  onTriggerDodge,
+  onVirtualMove,
 }) => {
   const [chatInput, setChatInput] = useState('');
   const [chatChannel, setChatChannel] = useState<ChatMessage['channel']>('all');
@@ -164,6 +178,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const [isMobileDevice, setIsMobileDevice] = useState(false);
   const [isAndroid, setIsAndroid] = useState(false);
   const [isDpsMeterOpen, setIsDpsMeterOpen] = useState(false);
+  const [hoveredSkillInfo, setHoveredSkillInfo] = useState<{ skill: ClassSkill; index: number } | null>(null);
 
 
   useEffect(() => {
@@ -269,30 +284,40 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 </span>
               </div>
 
-              {/* Weapon Mastery XP Bar */}
-              {playerStats.weaponMasteries && playerStats.activeWeaponType && (
-                <div className="relative w-full h-2 bg-black/90 rounded-md border border-amber-900/60 overflow-hidden">
+              {/* Weapon Mastery XP Bar & 10-Level Threshold */}
+              {playerStats.weaponMasteries && playerStats.activeWeaponType && (() => {
+                const activeWep = playerStats.weaponMasteries[playerStats.activeWeaponType];
+                const wepLevel = activeWep?.level || 1;
+                const milestone = getSkillMilestoneStats(wepLevel);
+                return (
                   <div
-                    className="h-full rounded transition-all duration-200"
-                    style={{
-                      width: `${Math.min(
-                        100,
-                        (playerStats.weaponMasteries[playerStats.activeWeaponType]?.xp /
-                          playerStats.weaponMasteries[playerStats.activeWeaponType]?.maxXp) *
-                          100
-                      )}%`,
-                      backgroundColor: playerStats.weaponMasteries[playerStats.activeWeaponType]?.color || '#f59e0b',
-                    }}
-                  />
-                  <span className="absolute inset-0 flex items-center justify-between text-[6px] sm:text-[7.5px] font-mono font-bold text-amber-200 drop-shadow px-1">
-                    <span>
-                      {playerStats.weaponMasteries[playerStats.activeWeaponType]?.icon}{' '}
-                      {playerStats.weaponMasteries[playerStats.activeWeaponType]?.name}
+                    onClick={onOpenCharacter}
+                    className="relative w-full h-3 bg-black/90 rounded-md border border-amber-900/60 overflow-hidden cursor-pointer group hover:border-[#00f0ff] transition-colors"
+                    title={`${activeWep?.name || 'Waffe'}: Stufe ${wepLevel}/100 • ${milestone.percentString} (+${milestone.bonusRate.toFixed(1)}) Bonus-Impact (Klicken für Details)`}
+                  >
+                    <div
+                      className="h-full rounded transition-all duration-200"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          ((activeWep?.xp || 0) / Math.max(1, activeWep?.maxXp || 100)) * 100
+                        )}%`,
+                        backgroundColor: activeWep?.color || '#f59e0b',
+                      }}
+                    />
+                    <span className="absolute inset-0 flex items-center justify-between text-[6px] sm:text-[7.5px] font-mono font-bold text-amber-200 drop-shadow px-1">
+                      <span className="flex items-center gap-1">
+                        <span>{activeWep?.icon}</span>
+                        <span className="truncate max-w-[85px] sm:max-w-none">{activeWep?.name}</span>
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span>Stufe {wepLevel}</span>
+                        <span className="text-[#00f0ff] font-bold">({milestone.percentString})</span>
+                      </span>
                     </span>
-                    <span>Rank {playerStats.weaponMasteries[playerStats.activeWeaponType]?.level}</span>
-                  </span>
-                </div>
-              )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
@@ -532,6 +557,26 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 </span>
               </div>
 
+              {/* Heavy Weapon Stagger Gauge / Vulnerability Status */}
+              {targetMob.isStaggered ? (
+                <div className="relative w-full h-3 sm:h-3.5 bg-amber-950/90 rounded border border-amber-400 overflow-hidden flex items-center justify-center animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.5)]">
+                  <div
+                    className="absolute inset-0 bg-gradient-to-r from-amber-500 via-yellow-300 to-amber-400 opacity-90 transition-all duration-75"
+                    style={{ width: `${Math.max(0, ((targetMob.staggerTimer || 0) / (targetMob.maxStaggerDuration || 2.5)) * 100)}%` }}
+                  />
+                  <span className="relative z-10 text-[7.5px] sm:text-[8.5px] font-mono font-extrabold text-black flex items-center gap-1 drop-shadow">
+                    ⚡ TAUMELND ({targetMob.staggerTimer?.toFixed(1)}s) • +30% VERWUNDBARKEIT
+                  </span>
+                </div>
+              ) : (targetMob.staggerMeter || 0) > 0 ? (
+                <div className="relative w-full h-1.5 bg-black/80 rounded border border-amber-900/60 overflow-hidden" title={`Stagger-Aufbau: ${Math.round(targetMob.staggerMeter || 0)}/${targetMob.maxStaggerMeter || 100}`}>
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-600 to-yellow-400 transition-all duration-100"
+                    style={{ width: `${Math.min(100, ((targetMob.staggerMeter || 0) / (targetMob.maxStaggerMeter || 100)) * 100)}%` }}
+                  />
+                </div>
+              ) : null}
+
               {/* Threat Table & Aggro Target Indicator */}
               <div className="flex items-center justify-between text-[8px] font-mono pt-0.5">
                 <div className="flex items-center gap-1 truncate">
@@ -599,14 +644,14 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           <div className="flex items-center gap-1">
             <button
               onClick={onOpenCharacter}
-              className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-[#fbbf24] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
+              className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-[#fbbf24] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
               title="Character [C]"
             >
               <User className="w-4 h-4" />
             </button>
             <button
               onClick={onOpenInventory}
-              className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-[#fbbf24] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
+              className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-[#fbbf24] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
               title="Inventar & Rüstkammer [B]"
             >
               <Package className="w-4 h-4" />
@@ -614,7 +659,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             {onOpenCrafting && (
               <button
                 onClick={onOpenCrafting}
-                className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-amber-400 text-amber-300 flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+                className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-amber-400 text-amber-300 flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
                 title="Handwerk & Berufe [H]"
               >
                 <Hammer className="w-4 h-4" />
@@ -624,7 +669,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             {onOpenDungeonFinder && (
               <button
                 onClick={onOpenDungeonFinder}
-                className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#00f0ff] text-[#00f0ff] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+                className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#00f0ff] text-[#00f0ff] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
                 title="Dungeon-Finder [L]"
               >
                 <Compass className="w-4 h-4" />
@@ -633,14 +678,23 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             )}
             <button
               onClick={onOpenClasses}
-              className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-[#fbbf24] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
-              title="Class Sanctum [K]"
+              className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-[#fbbf24] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
+              title="Meisterschafts-Sanctum [K] (Klassenloses System & Learning-by-Doing)"
             >
               <Sparkles className="w-4 h-4" />
             </button>
+            {onOpenAuctionHouse && (
+              <button
+                onClick={onOpenAuctionHouse}
+                className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-amber-400 text-amber-400 flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+                title="Auktionshaus [T]"
+              >
+                <Coins className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={onOpenParty}
-              className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-sky-400 text-sky-300 flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+              className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-sky-400 text-sky-300 flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
               title="Party Management [P]"
             >
               <Users className="w-4 h-4" />
@@ -654,7 +708,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             {onOpenGuild && (
               <button
                 onClick={onOpenGuild}
-                className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#00f0ff] text-[#00f0ff] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+                className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#00f0ff] text-[#00f0ff] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
                 title="Gilden-Verwaltung & Königreich [G]"
               >
                 <Crown className="w-4 h-4" />
@@ -663,7 +717,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             )}
             <button
               onClick={onOpenMap}
-              className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-[#fbbf24] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
+              className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-[#fbbf24] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
               title="World Map [M]"
             >
               <MapIcon className="w-4 h-4" />
@@ -672,7 +726,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             {onOpenEconomy && (
               <button
                 onClick={onOpenEconomy}
-                className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-emerald-400 text-emerald-300 flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+                className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-emerald-400 text-emerald-300 flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
                 title="NPC Economy & Markets [N]"
               >
                 <TrendingUp className="w-4 h-4" />
@@ -683,7 +737,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             {onOpenHomestead && (
               <button
                 onClick={onOpenHomestead}
-                className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#d4af37] text-[#d4af37] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+                className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#d4af37] text-[#d4af37] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
                 title="Homestead Builder [O]"
               >
                 <Hammer className="w-4 h-4" />
@@ -693,7 +747,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             {onOpenDeterminismOverlay && (
               <button
                 onClick={onOpenDeterminismOverlay}
-                className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#00f0ff] text-[#00f0ff] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+                className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#00f0ff] text-[#00f0ff] flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
                 title="Determinism Sync Monitor [F2]"
               >
                 <Activity className="w-4 h-4" />
@@ -704,7 +758,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             {/* DPS Meter & Combat Performance Toggle */}
             <button
               onClick={() => setIsDpsMeterOpen((prev) => !prev)}
-              className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl border flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative ${
+              className={`w-11 h-11 sm:w-10 sm:h-10 rounded-xl border flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative ${
                 isDpsMeterOpen
                   ? 'bg-amber-950/90 border-amber-400 text-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.4)]'
                   : 'bg-black/80 border-gray-800 hover:border-amber-500 text-amber-400'
@@ -721,7 +775,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               <button
                 id="btn-hud-auto-loot"
                 onClick={onToggleAutoLoot}
-                className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl ${
+                className={`w-11 h-11 sm:w-10 sm:h-10 rounded-xl ${
                   autoLootEnabled
                     ? 'bg-emerald-950/90 border-emerald-400/80 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.35)]'
                     : 'bg-black/80 border-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-700'
@@ -738,7 +792,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             {onOpenServerConsole && (
               <button
                 onClick={onOpenServerConsole}
-                className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-cyan-400 text-cyan-300 flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
+                className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-cyan-400 text-cyan-300 flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow relative"
                 title="MariaDB & GLB Vault [F1]"
               >
                 <Database className="w-4 h-4" />
@@ -748,7 +802,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
             <button
               onClick={handleToggleSound}
-              className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-gray-300 flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
+              className="w-11 h-11 sm:w-10 sm:h-10 rounded-xl bg-black/80 border border-gray-800 hover:border-[#b8860b] text-gray-300 flex items-center justify-center transition-all cursor-pointer backdrop-blur-md active:scale-95 shadow"
               title="Sound Toggle"
             >
               {isMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-[#fbbf24]" />}
@@ -1225,46 +1279,119 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
 
           {/* Mobile Hotbar Skill Buttons Cluster */}
-          <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-black/85 border border-[#b8860b]/40 backdrop-blur-md shadow-2xl">
-            {(playerStats.equippedSkills && playerStats.equippedSkills.length > 0
-              ? playerStats.equippedSkills
-              : classDef.skills
-            ).map((skill, index) => {
-              const isOnCd = skill.currentCooldown > 0;
-              const isPrimary = index === 0;
+          <div className="relative">
+            {/* Floating Skill Learning-by-Doing Tooltip Card */}
+            {hoveredSkillInfo && (() => {
+              const { skill, index } = hoveredSkillInfo;
+              const isSpell = skill.type === 'projectile' || skill.type === 'aoe' || skill.resourceType === 'mana';
+              const relevantType: WeaponType =
+                (skill as any).weaponType || (isSpell ? 'arcane' : (playerStats.activeWeaponType || 'blade'));
+              const mastery =
+                playerStats.weaponMasteries?.[relevantType] || playerStats.weaponMasteries?.blade;
+              const masteryLevel = mastery?.level || 1;
+              const milestone = getSkillMilestoneStats(masteryLevel);
+              const combatMult = getCombatMasteryMultiplier(masteryLevel);
+              const effectiveDamage = Math.round(skill.damage * combatMult.damageMultiplier);
 
               return (
-                <button
-                  key={skill.id || index}
-                  onClick={() => onCastSkill(index)}
-                  className={`relative rounded-xl border flex flex-col items-center justify-center transition-all cursor-pointer active:scale-90 shadow-inner ${
-                    isPrimary
-                      ? 'w-13 h-13 sm:w-15 sm:h-15 border-amber-400 bg-gradient-to-br from-amber-600/30 to-black text-2xl sm:text-3xl shadow-[0_0_12px_rgba(251,191,36,0.3)]'
-                      : 'w-10 h-10 sm:w-12 sm:h-12 border-gray-700 bg-black/70 text-lg sm:text-xl hover:border-[#fbbf24]'
-                  }`}
-                  title={`${skill.name} (${skill.resourceCost} ${classDef.resourceName})`}
-                >
-                  <span className="drop-shadow">{skill.icon}</span>
-
-                  {/* Cooldown Overlay */}
-                  {isOnCd && (
-                    <div className="absolute inset-0 bg-black/85 rounded-xl flex items-center justify-center text-[10px] sm:text-xs font-mono font-bold text-amber-300">
-                      {skill.currentCooldown.toFixed(1)}s
+                <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 w-72 sm:w-80 p-3 rounded-xl bg-[#0d131f]/95 border border-[#00f0ff]/60 shadow-[0_0_25px_rgba(0,240,255,0.3)] backdrop-blur-md text-gray-200 z-50 pointer-events-none animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-start justify-between gap-2 border-b border-gray-800 pb-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">{skill.icon}</span>
+                      <div>
+                        <h4 className="text-xs sm:text-sm font-serif font-bold text-white leading-tight">
+                          {skill.name}
+                        </h4>
+                        <span className="text-[9px] font-mono text-cyan-400 uppercase tracking-wider">
+                          {isSpell ? '✨ Zauberspruch' : '⚔️ Waffenfertigkeit'} • Slot [{index + 1}]
+                        </span>
+                      </div>
                     </div>
-                  )}
+                    <div className="text-right">
+                      <span className="text-[10px] font-mono font-bold text-amber-400 block">
+                        {skill.resourceCost} {classDef.resourceName}
+                      </span>
+                      <span className="text-[9px] font-mono text-gray-400">CD: {skill.cooldown}s</span>
+                    </div>
+                  </div>
 
-                  {/* Keybind Index Badge */}
-                  <span className="absolute -top-1 -left-1 w-3.5 h-3.5 rounded bg-black border border-gray-700 text-[#fbbf24] font-mono font-bold text-[8px] flex items-center justify-center shadow">
-                    {index + 1}
-                  </span>
+                  <p className="text-[11px] text-gray-300 font-sans leading-snug mb-2">{skill.description}</p>
 
-                  {/* Resource Cost Pill */}
-                  <span className="absolute -bottom-1 -right-1 px-0.5 bg-black/90 rounded border border-gray-800 text-[7px] font-mono text-gray-400">
-                    {skill.resourceCost}
-                  </span>
-                </button>
+                  {/* Learning by doing progression & 10-level threshold badge */}
+                  <div className="p-2 rounded-lg bg-black/80 border border-gray-800 space-y-1 text-[10px] font-mono">
+                    <div className="flex items-center justify-between text-gray-400">
+                      <span>Zugeordnete Meisterschaft:</span>
+                      <span className="text-white font-bold">{mastery?.name || relevantType}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Stufe (0–100):</span>
+                      <span className="text-[#00f0ff] font-bold">Stufe {masteryLevel} / 100</span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-gray-800/80 pt-1">
+                      <span className="text-gray-300 font-semibold">10-Level-Threshold:</span>
+                      <span className="text-emerald-400 font-bold">
+                        {milestone.percentString} (+{(milestone.bonusRate).toFixed(1)}) Bonus-Impact
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[9px] text-gray-400">
+                      <span>Effektiver Schaden:</span>
+                      <span className="text-cyan-300 font-bold">
+                        {effectiveDamage} <span className="text-gray-500">(Basis: {skill.damage})</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 text-[9px] font-mono text-amber-300/90 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
+                    <span>Learning-by-Doing: Steigt bei jeder Verwendung dieser Fertigkeit!</span>
+                  </div>
+                </div>
               );
-            })}
+            })()}
+
+            <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-black/85 border border-[#b8860b]/40 backdrop-blur-md shadow-2xl">
+              {(playerStats.equippedSkills && playerStats.equippedSkills.length > 0
+                ? playerStats.equippedSkills
+                : classDef.skills
+              ).map((skill, index) => {
+                const isOnCd = skill.currentCooldown > 0;
+                const isPrimary = index === 0;
+
+                return (
+                  <button
+                    key={skill.id || index}
+                    onClick={() => onCastSkill(index)}
+                    onMouseEnter={() => setHoveredSkillInfo({ skill, index })}
+                    onMouseLeave={() => setHoveredSkillInfo(null)}
+                    className={`relative rounded-xl border flex flex-col items-center justify-center transition-all cursor-pointer active:scale-90 shadow-inner ${
+                      isPrimary
+                        ? 'w-13 h-13 sm:w-15 sm:h-15 border-amber-400 bg-gradient-to-br from-amber-600/30 to-black text-2xl sm:text-3xl shadow-[0_0_12px_rgba(251,191,36,0.3)]'
+                        : 'w-10 h-10 sm:w-12 sm:h-12 border-gray-700 bg-black/70 text-lg sm:text-xl hover:border-[#fbbf24]'
+                    }`}
+                    title={`${skill.name} (${skill.resourceCost} ${classDef.resourceName})`}
+                  >
+                    <span className="drop-shadow">{skill.icon}</span>
+
+                    {/* Cooldown Overlay */}
+                    {isOnCd && (
+                      <div className="absolute inset-0 bg-black/85 rounded-xl flex items-center justify-center text-[10px] sm:text-xs font-mono font-bold text-amber-300">
+                        {skill.currentCooldown.toFixed(1)}s
+                      </div>
+                    )}
+
+                    {/* Keybind Index Badge */}
+                    <span className="absolute -top-1 -left-1 w-3.5 h-3.5 rounded bg-black border border-gray-700 text-[#fbbf24] font-mono font-bold text-[8px] flex items-center justify-center shadow">
+                      {index + 1}
+                    </span>
+
+                    {/* Resource Cost Pill */}
+                    <span className="absolute -bottom-1 -right-1 px-0.5 bg-black/90 rounded border border-gray-800 text-[7px] font-mono text-gray-400">
+                      {skill.resourceCost}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* XP Progression Line */}

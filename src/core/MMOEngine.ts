@@ -32,7 +32,12 @@ import { ResourceNode,
   DPSMeterStats,
   CombatLogEntry,
   BossTelegraph,
+  LeylineRiftEvent,
+  WorldEventAlert,
+  DungeonInstanceProgress,
 } from '../types';
+import { WorldEventManager } from '../engine/events/WorldEventManager';
+import { DungeonInstanceManager } from '../engine/dungeon/DungeonInstanceManager';
 import { INITIAL_RESOURCE_NODES, INITIAL_NPCS, MMORPG_CLASSES, COMPANION_PETS_DATABASE, HOMESTEAD_BLUEPRINTS, RPG_ITEMS_DATABASE } from '../data/mmorpgData';
 import { MOB_ELEMENTAL_AFFINITIES } from '../data/combatProgressionData';
 import { ElementalSynergyEngine } from '../engine/combat/ElementalSynergyEngine';
@@ -80,6 +85,7 @@ import {
   AURION_TOWER_ZONE_ID,
   AurionTransitionSnapshot,
 } from '../engine/aurion/AurionTransitionRuntime';
+import { getCombatMasteryMultiplier } from '../data/classlessProgression';
 import {
   prepareMerchantNpcDecision,
   merchantBootstrapMarkets,
@@ -107,8 +113,9 @@ interface ActiveProjectile {
   speed: number;
   damage: number;
   isCrit: boolean;
-  targetMobId: string;
+  targetMobId: string | null;
   color: string;
+  hitObstacle?: any;
 }
 
 interface ActiveAoEEffect {
@@ -251,10 +258,24 @@ export class MMOEngine {
   public directionalIndicators: DirectionalDamageIndicator[] = [];
   private dirIndicatorIdCounter: number = 0;
 
+  // Dynamic Screen Shake & Combat Kinetic Feedback
+  public screenShakeIntensity: number = 0;
+  public screenShakeDuration: number = 0;
+  public screenShakeTimer: number = 0;
+  public screenShakeOffset: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
+
+  public triggerScreenShake(intensity: number = 0.45, duration: number = 0.28) {
+    this.screenShakeIntensity = Math.max(this.screenShakeIntensity, intensity);
+    this.screenShakeDuration = Math.max(this.screenShakeDuration, duration);
+    this.screenShakeTimer = Math.max(this.screenShakeTimer, duration);
+  }
+
   // Next-Gen Deterministic Combat Overhaul Engines
   public elementalSynergyEngine: ElementalSynergyEngine;
   public telegraphVisualizer: TelegraphVisualizer;
   public combatMetricsTracker: CombatMetricsTracker;
+  public worldEventManager: WorldEventManager;
+  public dungeonInstanceManager: DungeonInstanceManager;
 
   // Virtual on-screen movement input
   public virtualForward: number = 0;
@@ -290,6 +311,10 @@ export class MMOEngine {
     directionalIndicators?: DirectionalDamageIndicator[];
     dpsMeterStats?: DPSMeterStats;
     combatLogs?: CombatLogEntry[];
+    activeRifts?: LeylineRiftEvent[];
+    recentAlerts?: WorldEventAlert[];
+    dungeonProgress?: DungeonInstanceProgress | null;
+    playerCoords?: { x: number; z: number };
   }) => void;
 
   private isRunning: boolean = false;
@@ -800,6 +825,26 @@ export class MMOEngine {
     };
     this.genkitAdapter = new GenkitAdapter();
     this.particleSystem = new ParticleSystem(this.scene);
+
+    // Initialize Dynamic World Event Manager (Leyline Rifts)
+    this.worldEventManager = new WorldEventManager(this.scene, this.mobManager, this.particleSystem);
+    this.worldEventManager.onAlertTriggered = (alert) => {
+      this.addChatMessage('system', 'Leylinien-Wächter', `${alert.icon} ${alert.title}: ${alert.message}`);
+      this.addFloatingText(alert.title, this.player.position.x, this.player.position.y + 3.0, alert.tier === 'mythic' ? '#a855f7' : alert.tier === 'heroic' ? '#f59e0b' : '#00f0ff', 'xl');
+    };
+
+    // Initialize Instanced Dungeon Manager
+    this.dungeonInstanceManager = new DungeonInstanceManager(this.scene, this.mobManager, this.particleSystem);
+    this.dungeonInstanceManager.onBossPhaseChanged = (boss, phase) => {
+      this.addChatMessage('system', 'Gewölbewächter', `⚠️ PHASE ${phase}: ${boss.phaseName}! ${boss.mechanicDescription}`);
+      this.addFloatingText(`⚠️ PHASE ${phase}: ${boss.phaseName}!`, this.player.position.x, this.player.position.y + 3.2, phase === 3 ? '#ef4444' : '#f59e0b', 'xl');
+      soundSynth.playComboMilestone(30);
+    };
+    this.dungeonInstanceManager.onInstanceVictory = (instance) => {
+      this.addChatMessage('system', 'Gewölbemeister', `🏆 GEWÖLBE BEZWUNGEN! Der Boss ist gefallen! Öffne die Belohnungstruhe im Zentrum!`);
+      this.addFloatingText(`🏆 GEWÖLBE BEZWUNGEN!`, this.player.position.x, this.player.position.y + 3.5, '#10b981', 'xl');
+      confetti({ particleCount: 150, spread: 90 });
+    };
 
 
     // Register landscape steam vents and beacon points into ParticleSystem
@@ -1464,12 +1509,28 @@ export class MMOEngine {
     return rolled;
   }
 
+  public getSkillImpactMultiplier(skill: ClassSkill): number {
+    const activeWep = this.player.getActiveWeaponType();
+    const wepMastery = this.player.stats.weaponMasteries[activeWep];
+    const wepLevel = wepMastery?.level || 1;
+    const isSpell = skill.type === 'projectile' || skill.type === 'aoe' || skill.resourceType === 'mana';
+    const arcaneLevel = this.player.stats.weaponMasteries.arcane?.level || 1;
+    const relevantLevel = isSpell ? Math.max(wepLevel, arcaneLevel) : wepLevel;
+    return getCombatMasteryMultiplier(relevantLevel).damageMultiplier;
+  }
+
   public castClassSkill(skillIndex: number, fromBuffer: boolean = false) {
     const classDef = MMORPG_CLASSES[this.player.currentClassId];
-    if (skillIndex < 0 || skillIndex >= classDef.skills.length) return;
+    const skillsList =
+      this.player.stats.equippedSkills && this.player.stats.equippedSkills.length > 0
+        ? this.player.stats.equippedSkills
+        : classDef.skills;
+    if (skillIndex < 0 || skillIndex >= skillsList.length) return;
+
+    const skill = skillsList[skillIndex];
 
     if (!fromBuffer) {
-      this.queueUserCommand('CAST_SPELL', { skillIndex, spellId: classDef.skills[skillIndex].name });
+      this.queueUserCommand('CAST_SPELL', { skillIndex, spellId: skill.name });
     }
 
     // Action Buffering if currently mid-swing
@@ -1479,7 +1540,6 @@ export class MMOEngine {
       return;
     }
 
-    const skill = classDef.skills[skillIndex];
     if (skill.currentCooldown > 0) {
       this.addFloatingText('Skill on Cooldown!', this.player.position.x, this.player.position.y + 2, '#ef4444', 'sm');
       return;
@@ -1491,6 +1551,20 @@ export class MMOEngine {
     }
 
     skill.currentCooldown = skill.cooldown;
+
+    // Award Aurion-Aether-Attunement & Staff XP for magic spells (Learning by Doing)
+    if (skill.type === 'projectile' || skill.type === 'aoe' || skill.resourceType === 'mana') {
+      const arcaneXp = Math.max(10, Math.round(skill.damage * 0.35));
+      const res = this.player.gainWeaponMasteryXp('arcane', arcaneXp);
+      if (res.leveledUp) {
+        soundSynth.playLevelUp();
+        this.addFloatingText(`★ AURION-AETHER LV. ${res.newLevel}! ★`, this.player.position.x, this.player.position.y + 2.5, '#00f0ff', 'xl');
+        this.addChatMessage('system', 'Mastery', `✨ Aurion-Aether-Attunement stieg auf Stufe ${res.newLevel} (+10% Zauber-Wucht pro 10 Level)!`);
+      }
+      if (this.player.getActiveWeaponType() === 'staff') {
+        this.player.gainWeaponMasteryXp('staff', arcaneXp);
+      }
+    }
 
     // Auto-acquire target if none selected
     if (!this.targetMob || Math.hypot(this.targetMob.x - this.player.position.x, this.targetMob.z - this.player.position.z) > 30) {
@@ -1547,10 +1621,50 @@ export class MMOEngine {
     this.particleSystem.emit('slash_cleave', hitCenter, skill.color, 1.2);
 
     // Damage all mobs in cleave radius
+    const impactMult = this.getSkillImpactMultiplier(skill);
+    
     const nearby = this.mobManager.getNearbyMobs(hitCenter.x, hitCenter.z, skill.aoeRadius || 4.0);
+    
+    // Also damage destroyable environmental objects
+    const hitRadius = skill.aoeRadius || 4.0;
+    const obstacles = collisionSystem.getNearbyObstacles(hitCenter.x, hitCenter.z, hitRadius);
+    for (const obs of obstacles) {
+      if (obs.isDestroyable && obs.hp !== undefined && obs.hp > 0) {
+        const dist = Math.hypot(obs.x - hitCenter.x, obs.z - hitCenter.z);
+        if (dist <= hitRadius + obs.radius) {
+          const dmg = Math.round(((skill.damage * impactMult) + this.player.stats.attackPower * 0.8) * 0.5); // Environmental damage
+          obs.hp -= dmg;
+          
+          this.addFloatingText(`-${dmg}`, obs.x, (obs.height || 4) + 1, '#d1d5db', 'md');
+          
+          if (obs.hp <= 0) {
+            this.particleSystem.emit('rock_shatter' as any, new THREE.Vector3(obs.x, 2, obs.z), '#9ca3af', 2.0);
+            
+            // Remove visually
+            if (obs.chunkKey) {
+              this.worldChunkManager.removeObstacleVisually(obs.chunkKey, obs.id);
+            }
+            // Remove collision
+            collisionSystem.removeObstacle(obs.id);
+            
+            // Give loot
+            if (obs.loots && obs.loots.length > 0) {
+               obs.loots.forEach(lootId => {
+                  this.player.inventory.push({ id: `${lootId}_${Date.now()}_${deterministicRng.nextFloat()}`, name: lootId, type: 'material', rarity: 'common', description: 'Gathered material', icon: '📦', stats: {}, valueGold: 1 } as any);
+                  this.addChatMessage('system', 'Loot', `${obs.name} zerstört. +1 ${lootId} erhalten.`);
+               });
+               
+            }
+          } else {
+             this.particleSystem.emit('dust_impact' as any, new THREE.Vector3(obs.x, 1, obs.z), '#d1d5db', 1.0);
+          }
+        }
+      }
+    }
+
     nearby.forEach((mob) => {
-      const isCrit = Math.random() * 100 < this.player.stats.critChance;
-      const baseDmg = (skill.damage + this.player.stats.attackPower * 0.8);
+      const isCrit = deterministicRng.nextFloat() * 100 < this.player.stats.critChance;
+      const baseDmg = ((skill.damage * impactMult) + this.player.stats.attackPower * 0.8);
       const totalDmg = Math.round(isCrit ? baseDmg * 1.85 : baseDmg);
 
       this.applyDamageToMob(mob.id, totalDmg, isCrit);
@@ -1560,7 +1674,7 @@ export class MMOEngine {
     for (const npc of this.npcs) {
       const dist = Math.hypot(npc.x - hitCenter.x, npc.z - hitCenter.z);
       if (dist < 4.0) {
-        this.processNPCEvent(npc.id, 'attack', { damage: skill.damage });
+        this.processNPCEvent(npc.id, 'attack', { damage: Math.round(skill.damage * impactMult) });
       }
     }
   }
@@ -1577,34 +1691,44 @@ export class MMOEngine {
       this.player.position.z
     );
     const targetPos = new THREE.Vector3(this.targetMob.x, 1.2, this.targetMob.z);
-
+    
     // Line of sight check
     const los = lineOfSight.checkLineOfSight(startPos, targetPos);
+    let finalTargetPos = targetPos;
+    let hitObstacle = null;
+    
     if (!los.hasLoS) {
-      this.addFloatingText('Sichtlinie blockiert!', this.targetMob.x, 2.0, '#94a3b8', 'md');
-      return;
+      if (los.blockingObstacle && los.blockingObstacle.isDestroyable) {
+         finalTargetPos = los.hitPoint || new THREE.Vector3(los.blockingObstacle.x, 1.2, los.blockingObstacle.z);
+         hitObstacle = los.blockingObstacle;
+      } else {
+        this.addFloatingText('Sichtlinie blockiert!', this.targetMob.x, 2.0, '#94a3b8', 'md');
+        return;
+      }
     }
-
+    
     const projGeo = new THREE.SphereGeometry(0.35, 8, 8);
     const projMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(skill.color) });
     const projMesh = new THREE.Mesh(projGeo, projMat);
     projMesh.position.copy(startPos);
     this.scene.add(projMesh);
-
+    
+    const impactMult = this.getSkillImpactMultiplier(skill);
     const isCrit = deterministicRng.rollChance(this.player.stats.critChance * this.currentWeather.critMultiplierShadow);
-    const baseDmg = skill.damage + (this.player.stats.spellPower || this.player.stats.attackPower) * 0.9;
+    const baseDmg = (skill.damage * impactMult) + (this.player.stats.spellPower || this.player.stats.attackPower) * 0.9;
     const totalDmg = Math.round(isCrit ? baseDmg * 1.9 : baseDmg);
 
-    this.projectiles.push({
+        this.projectiles.push({
       mesh: projMesh,
-      startPos,
-      targetPos,
+      startPos: startPos,
+      targetPos: finalTargetPos,
       progress: 0,
-      speed: 35.0,
+      speed: (skill as any).speed || 15,
       damage: totalDmg,
-      isCrit,
-      targetMobId: this.targetMob.id,
+      isCrit: isCrit,
+      targetMobId: hitObstacle ? null : this.targetMob.id,
       color: skill.color,
+      hitObstacle: hitObstacle,
     });
   }
 
@@ -1613,6 +1737,7 @@ export class MMOEngine {
     const targetZ = this.targetMob ? this.targetMob.z : this.player.position.z + Math.cos(this.player.facingAngle) * 6;
 
     const aoeRadius = skill.aoeRadius || 6.0;
+    const impactMult = this.getSkillImpactMultiplier(skill);
 
     // Launch real ballistic projectile with gravity arc and splash explosion
     const launchOrigin = new THREE.Vector3(this.player.position.x, this.player.position.y + 1.8, this.player.position.z);
@@ -1623,7 +1748,7 @@ export class MMOEngine {
       launchTarget,
       28.0,
       3.5,
-      skill.damage,
+      Math.round(skill.damage * impactMult),
       aoeRadius,
       parseInt(skill.color.replace('#', '0x'), 16) || 0x00f0ff,
       (hitPoint, splashRad, dmg) => {
@@ -1727,49 +1852,40 @@ export class MMOEngine {
     
     // Save overworld position
     this.preDungeonPosition = this.player.position.clone();
-    
     this.activeDungeon = dungeon;
     this.isInDungeon = true;
-    
-    // Teleport to an instanced origin (far away from main map)
-    const instancedZoneOffset = 10000 + Math.floor(Math.random() * 5000);
-    this.teleportPlayer(instancedZoneOffset, instancedZoneOffset, 2.0);
-    
-    this.addChatMessage('system', 'Dungeon Master', `Entered ${dungeon.name}! Objective: Slay ${dungeon.bosses.length} Bosses.`);
 
-    // Spawn Dungeon Bosses
-    dungeon.bosses.forEach((bossName, i) => {
-      const cx = instancedZoneOffset + Math.cos(i) * 15;
-      const cz = instancedZoneOffset + Math.sin(i) * 15;
-      this.mobManager.spawnDungeonBoss(
-        `instanced_boss_${dungeon.id}_${i}`,
-        bossName,
-        dungeon.levelReq + 2,
-        cx,
-        cz
-      );
-    });
+    // Start instanced dungeon system with boss phases and environment
+    this.dungeonInstanceManager.startDungeon(dungeon, this.partyManager.members);
+    const origin = this.dungeonInstanceManager.originCoords;
+    this.teleportPlayer(origin.x, origin.z, 0.5);
     
+    this.addChatMessage('system', 'Gewölbemeister', `⚔️ [${dungeon.germanName}] betreten! Bezwinge die Vorhut und stelle dich dem Gewölbeboss!`);
+
     // Set atmosphere based on dungeon
-    this.currentSkyColor.setHex(0x0a0404);
+    this.currentSkyColor.setHex(0x070d18);
     this.scene.background = this.currentSkyColor;
-    this.ambientLight.intensity = 0.2;
+    this.ambientLight.intensity = 0.35;
     this.ambientLight.color.setHex(0xffaaaa);
   }
 
   public exitDungeon() {
-    if (!this.isInDungeon || !this.preDungeonPosition) return;
+    if (!this.isInDungeon) return;
     
+    // Clean up dungeon assets and mobs
+    this.dungeonInstanceManager.cleanupCurrentInstance();
     this.isInDungeon = false;
     this.activeDungeon = null;
     
     // Restore overworld position
-    this.teleportPlayer(this.preDungeonPosition.x, this.preDungeonPosition.z, this.preDungeonPosition.y);
-    this.preDungeonPosition = null;
+    if (this.preDungeonPosition) {
+      this.teleportPlayer(this.preDungeonPosition.x, this.preDungeonPosition.z, this.preDungeonPosition.y);
+      this.preDungeonPosition = null;
+    } else {
+      this.teleportPlayer(0, 0, 0);
+    }
     
-    this.addChatMessage('system', 'Dungeon Master', `Exited the dungeon and returned to the overworld.`);
-    
-    // Day-night cycle will automatically restore the overworld lighting on next tick
+    this.addChatMessage('system', 'Gewölbemeister', `🏛️ Instanz verlassen. Zurück im Oberwelt-Observatorium.`);
   }
 
   private applyDamageToMob(mobId: string, damage: number, isCrit: boolean) {
@@ -1799,11 +1915,16 @@ export class MMOEngine {
     const result = this.mobManager.damageMob(mobId, finalDamage, 'hero_player_1', isTank, 'Hero Player');
     if (!result.mob) return;
 
+    // Bonus damage on staggered target
+    if (result.mob.isStaggered) {
+      finalDamage = Math.round(finalDamage * 1.3);
+    }
+
     // Process Elemental Synergy & Resistances
     const activeWep = this.player.getActiveWeaponType();
     let dmgType: 'physical' | 'arcane' | 'fire' | 'frost' | 'electric' | 'nature' = 'physical';
     if (this.player.currentClassId === 'mage') {
-      dmgType = Math.random() < 0.5 ? 'arcane' : 'frost';
+      dmgType = deterministicRng.nextFloat() < 0.5 ? 'arcane' : 'frost';
     } else if (this.player.currentClassId === 'engineer') {
       dmgType = 'fire';
     } else if (this.player.currentClassId === 'ranger') {
@@ -1845,6 +1966,18 @@ export class MMOEngine {
       });
     }
 
+    // Strike direction from player to target mob
+    const strikeDir = new THREE.Vector3(
+      result.mob.x - this.player.position.x,
+      0,
+      result.mob.z - this.player.position.z
+    );
+    if (strikeDir.lengthSq() < 0.001) {
+      strikeDir.set(Math.sin(this.player.facingAngle), 0, Math.cos(this.player.facingAngle));
+    } else {
+      strikeDir.normalize();
+    }
+
     // Record combat metrics
     this.combatMetricsTracker.recordDamageDealt(finalDamage, isCrit, result.mob.name);
     this.recordComboHit(finalDamage, isCrit, activeWep);
@@ -1860,18 +1993,27 @@ export class MMOEngine {
 
     soundSynth.playHitSound();
 
-    // Trigger Combat Particle Burst
+    // Trigger Combat Particle Burst & Screen Shake on Critical Hit
     let pType: ParticleEffectType = 'combat_hit';
     let pColor = '#ffffff';
 
     if (isCrit) {
       pType = 'combat_crit';
       pColor = '#fbbf24';
+      // Screen-shake on Critical Hit
+      this.triggerScreenShake(0.52, 0.32);
+      // Directional impact particles aligned with strike trajectory
+      this.particleSystem.emitDirectionalImpactCrit(
+        { x: result.mob.x, y: result.mob.y + 1.2, z: result.mob.z },
+        strikeDir,
+        '#fbbf24',
+        1.5
+      );
     } else {
       switch (this.player.currentClassId) {
         case 'mage':
-          pType = Math.random() > 0.5 ? 'electric_spark' : 'frost_shatter';
-          pColor = Math.random() > 0.5 ? '#e879f9' : '#38bdf8'; // Purple for arcane, Cyan for frost
+          pType = deterministicRng.nextFloat() > 0.5 ? 'electric_spark' : 'frost_shatter';
+          pColor = deterministicRng.nextFloat() > 0.5 ? '#e879f9' : '#38bdf8'; // Purple for arcane, Cyan for frost
           break;
         case 'knight':
           pType = 'physical_hit';
@@ -1894,16 +2036,72 @@ export class MMOEngine {
       this.particleSystem.emit(pType, { x: result.mob.x, y: result.mob.y + 1.0, z: result.mob.z }, pColor, 1.0);
     }
 
+    // Heavy Weapon Combo Stagger Mechanic
+    const isHeavyWep =
+      activeWep === 'warhammer' ||
+      activeWep === 'greatsword' ||
+      activeWep === 'battleaxe' ||
+      activeWep === 'heavy_tech' ||
+      this.player.currentClassId === 'knight';
+
+    if (isHeavyWep && result.mob.hp > 0) {
+      if (!result.mob.isStaggered) {
+        let baseStagger = activeWep === 'warhammer' ? 38 : activeWep === 'greatsword' ? 32 : activeWep === 'battleaxe' ? 34 : 26;
+        if (isCrit) baseStagger *= 1.55;
+        if (this.comboState.count >= 5) baseStagger *= 1.25;
+
+        result.mob.staggerMeter = (result.mob.staggerMeter || 0) + baseStagger;
+        const maxStagger = result.mob.maxStaggerMeter || (result.mob.isBoss ? 160 : result.mob.isElite ? 120 : 100);
+
+        if (result.mob.staggerMeter >= maxStagger) {
+          // Trigger Combo Stagger!
+          result.mob.isStaggered = true;
+          result.mob.staggerTimer = result.mob.isBoss ? 2.0 : 3.0;
+          result.mob.maxStaggerDuration = result.mob.staggerTimer;
+          result.mob.staggerMeter = 0;
+          result.mob.attackCooldown = Math.max(result.mob.attackCooldown, result.mob.staggerTimer);
+          result.mob.castProgress = 0; // Interrupt boss cast
+
+          // Stagger Knockback along strike direction
+          const knockDist = result.mob.isBoss ? 0.7 : 1.8;
+          result.mob.x += strikeDir.x * knockDist;
+          result.mob.z += strikeDir.z * knockDist;
+
+          this.triggerScreenShake(0.65, 0.38);
+          this.particleSystem.emit('electric_spark', { x: result.mob.x, y: result.mob.y + 1.2, z: result.mob.z }, '#f59e0b', 2.0);
+          this.particleSystem.emit('aurion_blast', { x: result.mob.x, y: result.mob.y + 0.4, z: result.mob.z }, '#f59e0b', 1.5);
+
+          this.addFloatingText(
+            '💥 COMBO STAGGER! [VULNERABLE]',
+            result.mob.x,
+            result.mob.y + 2.8,
+            '#f59e0b',
+            'xl',
+            true,
+            result.mob.z,
+            'combo',
+            '⚡'
+          );
+
+          this.addChatMessage(
+            'system',
+            'Combat',
+            `⚡ [${result.mob.name}] geriet durch schwere Wucht INS TAUMELN! (+30% Bonusschaden)`
+          );
+        }
+      }
+    }
+
     // Floating damage text with 3D coordinates and combo rank flare
     const floatColor = isCrit ? '#fbbf24' : this.comboState.count >= 10 ? this.comboState.rankColor : '#ffffff';
     this.addFloatingText(
       isCrit ? `★ CRIT! ${finalDamage}` : `${finalDamage}`,
-      result.mob.x + (Math.random() - 0.5) * 1.2,
+      result.mob.x + (deterministicRng.nextFloat() - 0.5) * 1.2,
       result.mob.y + 2.2,
       floatColor,
       isCrit ? 'xl' : this.comboState.count >= 10 ? 'lg' : 'md',
       isCrit,
-      result.mob.z + (Math.random() - 0.5) * 0.8,
+      result.mob.z + (deterministicRng.nextFloat() - 0.5) * 0.8,
       isCrit ? 'crit' : 'damage',
       isCrit ? '★' : undefined
     );
@@ -1932,6 +2130,12 @@ export class MMOEngine {
     if (result.isKilled) {
       soundSynth.playMobDeath();
       this.player.stats.kills += 1;
+
+      // Notify World Event Manager and Dungeon Instance Manager of mob defeat
+      this.worldEventManager.handleMobDefeatedInZone(result.mob);
+      if (this.isInDungeon) {
+        this.dungeonInstanceManager.handleMobDefeated(result.mob);
+      }
 
       // Award bonus kill weapon mastery XP
       const killMastery = this.player.gainWeaponMasteryXp(activeWep, result.mob.expReward);
@@ -2074,7 +2278,7 @@ export class MMOEngine {
   ) {
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     this.chatMessages.push({
-      id: `chat_${Date.now()}_${Math.random()}`,
+      id: `chat_${Date.now()}_${deterministicRng.nextFloat()}`,
       channel,
       sender,
       text,
@@ -2666,15 +2870,37 @@ export class MMOEngine {
       }
     });
 
-    // 4. Update 3rd Person Orbit / Follow Camera
+    // 4. Update 3rd Person Orbit / Follow Camera with Dynamic Screen Shake
+    if (this.screenShakeTimer > 0) {
+      this.screenShakeTimer -= delta;
+      const progress = Math.max(0, this.screenShakeTimer / (this.screenShakeDuration || 0.28));
+      const currentIntensity = this.screenShakeIntensity * progress;
+      this.screenShakeOffset.set(
+        (deterministicRng.nextFloat() - 0.5) * 2 * currentIntensity,
+        (deterministicRng.nextFloat() - 0.5) * 2 * currentIntensity * 0.75,
+        (deterministicRng.nextFloat() - 0.5) * 2 * currentIntensity
+      );
+      if (this.screenShakeTimer <= 0) {
+        this.screenShakeIntensity = 0;
+        this.screenShakeDuration = 0;
+        this.screenShakeOffset.set(0, 0, 0);
+      }
+    } else {
+      this.screenShakeOffset.set(0, 0, 0);
+    }
+
     const horizDist = this.cameraDistance * Math.cos(this.cameraPitch);
     const vertDist = this.cameraHeight + this.cameraDistance * Math.sin(this.cameraPitch);
-    const targetCamX = this.player.position.x + Math.sin(this.cameraYaw) * horizDist;
-    const targetCamY = this.player.position.y + vertDist;
-    const targetCamZ = this.player.position.z + Math.cos(this.cameraYaw) * horizDist;
+    const targetCamX = this.player.position.x + Math.sin(this.cameraYaw) * horizDist + this.screenShakeOffset.x;
+    const targetCamY = this.player.position.y + vertDist + this.screenShakeOffset.y;
+    const targetCamZ = this.player.position.z + Math.cos(this.cameraYaw) * horizDist + this.screenShakeOffset.z;
 
-    this.camera.position.lerp(new THREE.Vector3(targetCamX, targetCamY, targetCamZ), delta * 8.0);
-    this.camera.lookAt(this.player.position.x, this.player.position.y + 1.6, this.player.position.z);
+    this.camera.position.lerp(new THREE.Vector3(targetCamX, targetCamY, targetCamZ), delta * 10.0);
+    this.camera.lookAt(
+      this.player.position.x + this.screenShakeOffset.x * 0.35,
+      this.player.position.y + 1.6 + this.screenShakeOffset.y * 0.35,
+      this.player.position.z + this.screenShakeOffset.z * 0.35
+    );
 
     // 5. Update Mobs AI & Authoritative Threat Matrix with Target Tether Lines
     this.mobManager.update(
@@ -2840,7 +3066,7 @@ export class MMOEngine {
           const targetZ = this.player.position.z;
           const angleToTarget = Math.atan2(targetX - mob.x, targetZ - mob.z);
           const tType: 'circle' | 'cone' | 'rectangle' = mob.isBoss
-            ? (Math.random() < 0.4 ? 'circle' : Math.random() < 0.7 ? 'cone' : 'rectangle')
+            ? (deterministicRng.nextFloat() < 0.4 ? 'circle' : deterministicRng.nextFloat() < 0.7 ? 'cone' : 'rectangle')
             : 'circle';
 
           const telegraph: BossTelegraph = {
@@ -2868,6 +3094,12 @@ export class MMOEngine {
       }
     });
 
+    // 5.7 Update Dynamic Leyline World Events & Instanced Dungeon Combat
+    this.worldEventManager.update(delta, this.player.position.x, this.player.position.z);
+    if (this.isInDungeon) {
+      this.dungeonInstanceManager.updateBossCombat(delta, this.player.position.x, this.player.position.z);
+    }
+
     // 6. Update Loot Drops & Check nearby interaction prompts (with Auto-Loot for common items)
     this.lootManager.update(delta);
 
@@ -2886,7 +3118,7 @@ export class MMOEngine {
           }
           this.addFloatingText(
             `+ Auto-Loot: ${loot.item.name}`,
-            this.player.position.x + (Math.random() - 0.5) * 1.5,
+            this.player.position.x + (deterministicRng.nextFloat() - 0.5) * 1.5,
             this.player.position.y + 2.2,
             loot.beamColor,
             'md'
@@ -2920,7 +3152,34 @@ export class MMOEngine {
 
       if (proj.progress >= 1.0) {
         this.scene.remove(proj.mesh);
-        this.applyDamageToMob(proj.targetMobId, proj.damage, proj.isCrit);
+        
+        if (proj.hitObstacle) {
+           const obs = proj.hitObstacle;
+           if (obs.hp !== undefined) {
+             obs.hp -= proj.damage;
+             this.addFloatingText(`-${proj.damage}`, obs.x, (obs.height || 4) + 1, '#d1d5db', 'md');
+             if (obs.hp <= 0) {
+                this.particleSystem.emit('rock_shatter' as any, new THREE.Vector3(obs.x, 2, obs.z), '#9ca3af', 2.0);
+                if (obs.chunkKey) {
+                  this.worldChunkManager.removeObstacleVisually(obs.chunkKey, obs.id);
+                }
+                collisionSystem.removeObstacle(obs.id);
+                if (obs.loots && obs.loots.length > 0) {
+                   obs.loots.forEach(lootId => {
+                      this.player.inventory.push({ id: `${lootId}_${Date.now()}_${deterministicRng.nextFloat()}`, name: lootId, type: 'material', rarity: 'common', description: 'Gathered material', icon: '📦', stats: {}, valueGold: 1 } as any);
+                      this.addChatMessage('system', 'Loot', `${obs.name} zerstört. +1 ${lootId} erhalten.`);
+                   });
+                   
+                }
+             } else {
+                this.particleSystem.emit('dust_impact' as any, new THREE.Vector3(obs.x, 1, obs.z), '#d1d5db', 1.0);
+             }
+           }
+        } else {
+           if (proj.targetMobId) {
+             this.applyDamageToMob(proj.targetMobId, proj.damage, proj.isCrit);
+           }
+        }
       } else {
         remainingProjs.push(proj);
       }
@@ -2970,8 +3229,8 @@ export class MMOEngine {
         if (effect.damage) {
           this.player.takeDamage(effect.damage);
           this.addDirectionalDamageIndicator(
-            this.player.position.x + (Math.random() - 0.5) * 4,
-            this.player.position.z + (Math.random() - 0.5) * 4,
+            this.player.position.x + (deterministicRng.nextFloat() - 0.5) * 4,
+            this.player.position.z + (deterministicRng.nextFloat() - 0.5) * 4,
             effect.damage,
             false,
             'hazard',
@@ -3177,6 +3436,10 @@ export class MMOEngine {
         directionalIndicators: [...this.directionalIndicators],
         dpsMeterStats: this.combatMetricsTracker.getStats(),
         combatLogs: this.combatMetricsTracker.getStats().recentLogs,
+        activeRifts: [...this.worldEventManager.activeRifts],
+        recentAlerts: [...this.worldEventManager.recentAlerts],
+        dungeonProgress: this.dungeonInstanceManager.activeInstance ? { ...this.dungeonInstanceManager.activeInstance } : null,
+        playerCoords: { x: this.player.position.x, z: this.player.position.z },
       });
     }
   }
@@ -3538,8 +3801,8 @@ export class MMOEngine {
   }
 
   public spawnCustomMob(type: WorldMobEntity['type'], x?: number, z?: number) {
-    const spawnX = x !== undefined ? x : this.player.position.x + (Math.random() - 0.5) * 10;
-    const spawnZ = z !== undefined ? z : this.player.position.z + (Math.random() - 0.5) * 10;
+    const spawnX = x !== undefined ? x : this.player.position.x + (deterministicRng.nextFloat() - 0.5) * 10;
+    const spawnZ = z !== undefined ? z : this.player.position.z + (deterministicRng.nextFloat() - 0.5) * 10;
 
     this.mobManager.spawnCustomMob(type, spawnX, spawnZ);
     this.particleSystem.emit('teleport_warp', { x: spawnX, y: 1.0, z: spawnZ }, '#a855f7', 1.5);

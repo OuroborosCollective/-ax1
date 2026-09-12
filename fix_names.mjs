@@ -1,0 +1,12 @@
+import fs from 'fs';
+let code = fs.readFileSync('src/world/WorldChunkManager.ts', 'utf8');
+code = code.replace(/const treeGroup = new THREE\.Group\(\);/g, "const treeGroup = new THREE.Group();\n        treeGroup.name = obs.id;");
+code = code.replace(/const bldgGroup = new THREE\.Group\(\);/g, "const bldgGroup = new THREE.Group();\n        bldgGroup.name = obs.id;");
+code = code.replace(/const towerGroup = new THREE\.Group\(\);/g, "const towerGroup = new THREE.Group();\n        towerGroup.name = obs.id;");
+code = code.replace(/const gateGroup = new THREE\.Group\(\);/g, "const gateGroup = new THREE.Group();\n        gateGroup.name = obs.id;");
+code = code.replace(/const pillarGroup = new THREE\.Group\(\);/g, "const pillarGroup = new THREE.Group();\n        pillarGroup.name = obs.id;");
+code = code.replace(/const borderStone = new THREE\.Group\(\);/g, "const borderStone = new THREE.Group();\n        borderStone.name = obs.id;");
+code = code.replace(/const wallGroup = new THREE\.Group\(\);/g, "const wallGroup = new THREE.Group();\n        wallGroup.name = obs.id;");
+code = code.replace(/const moundGroup = new THREE\.Group\(\);/g, "const moundGroup = new THREE.Group();\n        moundGroup.name = obs.id;");
+code = code.replace(/const rock = new THREE\.Mesh\(rockGeo, rockMat\);/g, "const rock = new THREE.Mesh(rockGeo, rockMat);\n        rock.name = obs.id;");
+fs.writeFileSync('src/world/WorldChunkManager.ts', code);

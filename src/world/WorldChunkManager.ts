@@ -221,6 +221,17 @@ export class WorldChunkManager {
     }
   }
 
+  
+  public removeObstacleVisually(chunkKey: string, obstacleId: string) {
+    const chunkMesh = this.chunkMeshes.get(chunkKey);
+    if (!chunkMesh) return;
+    const obj = chunkMesh.getObjectByName(obstacleId);
+    if (obj) {
+      chunkMesh.remove(obj);
+      // We could also do proper disposal here
+    }
+  }
+
   public getChunk(chunkKey: string): WorldChunkData | undefined {
     return this.chunks.get(chunkKey);
   }
@@ -340,6 +351,11 @@ export class WorldChunkManager {
           radius,
           height: 7.0 + rng() * 4.0,
           name: 'Flüsterwald-Baum',
+          hp: 100,
+          maxHp: 100,
+          isDestroyable: true,
+          respawnTime: 60000, // 1 minute
+          loots: ['wood_log', 'apple'],
           chunkKey,
         });
       }
@@ -357,6 +373,11 @@ export class WorldChunkManager {
           radius,
           height: 3.5,
           name: 'Moosiger Granitfelsen',
+          hp: 200,
+          maxHp: 200,
+          isDestroyable: true,
+          respawnTime: 120000, // 2 minutes
+          loots: ['stone_block', 'raw_iron'],
           chunkKey,
         });
       }
@@ -589,6 +610,7 @@ export class WorldChunkManager {
 
       if (obs.type === 'tree') {
         const treeGroup = new THREE.Group();
+        treeGroup.name = obs.id;
         treeGroup.position.set(localX, 0, localZ);
 
         // Trunk
@@ -608,6 +630,7 @@ export class WorldChunkManager {
         group.add(treeGroup);
       } else if (obs.type === 'building') {
         const bldgGroup = new THREE.Group();
+        bldgGroup.name = obs.id;
         bldgGroup.position.set(localX, 0, localZ);
 
         // Masonry walls
@@ -632,6 +655,7 @@ export class WorldChunkManager {
         group.add(bldgGroup);
       } else if (obs.type === 'tower') {
         const towerGroup = new THREE.Group();
+        towerGroup.name = obs.id;
         towerGroup.position.set(localX, 0, localZ);
 
         const bodyGeo = new THREE.CylinderGeometry(obs.radius * 0.85, obs.radius, obs.height || 12, 8);
@@ -653,6 +677,7 @@ export class WorldChunkManager {
         group.add(towerGroup);
       } else if (obs.type === 'dungeon_gate') {
         const gateGroup = new THREE.Group();
+        gateGroup.name = obs.id;
         gateGroup.position.set(localX, 0, localZ);
 
         // Gateway Pillars
@@ -678,6 +703,7 @@ export class WorldChunkManager {
         group.add(gateGroup);
       } else if (obs.type === 'border_stone' || obs.type === 'ruin_pillar') {
         const pillarGroup = new THREE.Group();
+        pillarGroup.name = obs.id;
         pillarGroup.position.set(localX, 0, localZ);
 
         const pillarGeo = new THREE.OctahedronGeometry(obs.radius, 0);
@@ -712,6 +738,7 @@ export class WorldChunkManager {
         group.add(wall);
       } else if (obs.type === 'homestead_building') {
         const bldgGroup = new THREE.Group();
+        bldgGroup.name = obs.id;
         bldgGroup.position.set(localX, 0, localZ);
         
         // Wood/Stone Walls
@@ -734,6 +761,7 @@ export class WorldChunkManager {
         rockGeo.scale(1.2, 0.9, 1.1);
         const rockMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.9 });
         const rock = new THREE.Mesh(rockGeo, rockMat);
+        rock.name = obs.id;
         rock.position.set(localX, obs.radius * 0.7, localZ);
         rock.rotation.set(0.2, localX * 0.1, 0);
         group.add(rock);

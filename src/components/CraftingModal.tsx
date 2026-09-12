@@ -29,6 +29,11 @@ import {
   GATHERING_ACTIVITIES,
   addProfessionExperience,
 } from '../data/professionsData';
+import {
+  getCraftingDuplicateChance,
+  getGatheringYieldMultiplier,
+  getSkillMilestoneStats,
+} from '../data/classlessProgression';
 
 interface CraftingModalProps {
   isOpen: boolean;
@@ -135,11 +140,33 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
         const xpResult = addProfessionExperience(professions, selectedRecipe.professionId, selectedRecipe.xpReward);
         onUpdateProfessions(xpResult.updatedProfessions);
 
-        // Call success callback
+        // Check Crafting Duplicate Milestone (10% / +0.1 per 10 levels)
+        const currentProfLevel = professions[selectedRecipe.professionId]?.level || 1;
+        const duplicateData = getCraftingDuplicateChance(currentProfLevel);
+        const gotDuplicate = duplicateData.chance > 0 && Math.random() < duplicateData.chance;
+
+        // Call success callback (first item)
         onCraftSuccess(selectedRecipe.outputItem, consumedItems, selectedRecipe.xpReward, selectedRecipe.professionId);
 
-        setFeedbackNotice(`✨ Erfolgreich hergestellt: ${selectedRecipe.germanName} (+${selectedRecipe.xpReward} ${professions[selectedRecipe.professionId]?.germanName || ''} XP)!`);
-        setTimeout(() => setFeedbackNotice(null), 4500);
+        // If duplicate was triggered: award the second item of the crafted piece!
+        if (gotDuplicate) {
+          const duplicateItem: RPGItem = {
+            ...selectedRecipe.outputItem,
+            id: `${selectedRecipe.outputItem.id}_dup_${Date.now()}`,
+          };
+          onCraftSuccess(duplicateItem, [], 0, selectedRecipe.professionId);
+        }
+
+        if (gotDuplicate) {
+          setFeedbackNotice(
+            `🎉 MEISTER-HANDWERK! Doppelter Gegenstand hergestellt (${selectedRecipe.germanName} × 2) dank Stufe ${currentProfLevel} (${duplicateData.percentString} Chance)!`
+          );
+        } else {
+          setFeedbackNotice(
+            `✨ Erfolgreich hergestellt: ${selectedRecipe.germanName} (+${selectedRecipe.xpReward} ${professions[selectedRecipe.professionId]?.germanName || ''} XP)!`
+          );
+        }
+        setTimeout(() => setFeedbackNotice(null), 5000);
       }
     }, 50);
   };
@@ -167,8 +194,14 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
         clearInterval(interval);
         setActiveGatheringId(null);
 
-        // Calculate yield
-        const count = Math.floor(Math.random() * (activity.maxYield - activity.minYield + 1)) + activity.minYield;
+        // Calculate yield with 10-level milestone bonus (+10% / +0.1 per 10 levels)
+        const currentGatherProf = professions[professionId] || DEFAULT_PROFESSION_SKILLS[professionId];
+        const currentGLevel = currentGatherProf?.level || 1;
+        const yieldData = getGatheringYieldMultiplier(currentGLevel);
+
+        const baseCount = Math.floor(Math.random() * (activity.maxYield - activity.minYield + 1)) + activity.minYield;
+        const count = Math.max(1, Math.round(baseCount * yieldData.multiplier));
+
         const yieldItem: RPGItem = {
           id: `${activity.yieldItem.id}_${Date.now()}`,
           name: activity.yieldItem.name,
@@ -189,7 +222,11 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
         // Call callback
         onGatherSuccess(yieldItem, count, activity.xpGain, professionId);
 
-        setFeedbackNotice(`🌿 ${activity.germanName} beendet: +${count}x ${yieldItem.name} erhalten (+${activity.xpGain} XP)!`);
+        setFeedbackNotice(
+          `🌿 ${activity.germanName} beendet: +${count}x ${yieldItem.name} erhalten (+${activity.xpGain} XP)${
+            yieldData.extraPercent > 0 ? ` [inkl. +${yieldData.extraPercent}% Meisterschafts-Ertrag]` : ''
+          }!`
+        );
         setTimeout(() => setFeedbackNotice(null), 4500);
       }
     }, 50);
@@ -483,30 +520,42 @@ export const CraftingModal: React.FC<CraftingModalProps> = ({
                   </div>
 
                   {/* Crafting Requirements & Rewards Info */}
-                  <div className="grid grid-cols-3 gap-2 p-3 rounded-xl bg-black/40 border border-gray-800 text-center text-xs">
-                    <div>
-                      <span className="text-[10px] text-gray-400 block">Benötigte Stufe</span>
-                      <span
-                        className={`font-mono font-bold ${
-                          levelTooLow ? 'text-red-400' : 'text-emerald-300'
-                        }`}
-                      >
-                        Stufe {selectedRecipe.requiredLevel}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-gray-400 block">Handwerks-XP</span>
-                      <span className="font-mono font-bold text-amber-300">
-                        +{selectedRecipe.xpReward} XP
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-gray-400 block">Dauer</span>
-                      <span className="font-mono font-bold text-gray-300">
-                        {selectedRecipe.craftTimeSeconds}s
-                      </span>
-                    </div>
-                  </div>
+                  {(() => {
+                    const currentProfLevel = professions[selectedRecipe.professionId]?.level || 1;
+                    const dupData = getCraftingDuplicateChance(currentProfLevel);
+                    return (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 rounded-xl bg-black/40 border border-gray-800 text-center text-xs">
+                        <div>
+                          <span className="text-[10px] text-gray-400 block">Benötigte Stufe</span>
+                          <span
+                            className={`font-mono font-bold ${
+                              levelTooLow ? 'text-red-400' : 'text-emerald-300'
+                            }`}
+                          >
+                            Stufe {selectedRecipe.requiredLevel}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-gray-400 block">Handwerks-XP</span>
+                          <span className="font-mono font-bold text-amber-300">
+                            +{selectedRecipe.xpReward} XP
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-gray-400 block">Dauer</span>
+                          <span className="font-mono font-bold text-gray-300">
+                            {selectedRecipe.craftTimeSeconds}s
+                          </span>
+                        </div>
+                        <div className="bg-[#00f0ff]/10 rounded-lg p-1 border border-[#00f0ff]/30">
+                          <span className="text-[10px] text-[#00f0ff] block font-bold">2. Item Chance</span>
+                          <span className="font-mono font-bold text-cyan-300">
+                            {dupData.percentString} (Lv. {currentProfLevel})
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Progress Bar when crafting */}
                   {isCrafting && (

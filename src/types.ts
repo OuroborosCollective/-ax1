@@ -516,6 +516,11 @@ export interface WorldMobEntity {
   fightStartX?: number; // Starting coordinate where fight engaged
   fightStartZ?: number;
   topThreat?: number;
+  staggerMeter?: number; // 0 to 100 stagger gauge
+  maxStaggerMeter?: number; // default 100
+  isStaggered?: boolean; // currently stunned/staggered by heavy combo
+  staggerTimer?: number; // remaining stagger duration in seconds
+  maxStaggerDuration?: number;
 }
 
 export interface SimulatedPlayer {
@@ -862,6 +867,11 @@ export interface SolidObstacle {
   radius: number;
   height?: number;
   name?: string;
+  hp?: number;
+  maxHp?: number;
+  isDestroyable?: boolean;
+  respawnTime?: number;
+  loots?: string[];
   chunkKey?: string;
 }
 
@@ -980,4 +990,120 @@ export interface ResourceNode {
   respawnTimeSeconds: number;
   isDepleted: boolean;
   color: string;
+}
+
+// ==========================================
+// DYNAMIC WORLD EVENTS & LEYLINE RIFTS
+// ==========================================
+
+export type LeylineRiftTier = 'normal' | 'heroic' | 'mythic';
+export type LeylineRiftPhase =
+  | 'opening'
+  | 'wave_1'
+  | 'wave_2'
+  | 'boss_phase'
+  | 'destabilizing'
+  | 'sealed'
+  | 'expired';
+
+export interface LeylineRiftEvent {
+  id: string;
+  name: string;
+  germanName: string;
+  zone: string;
+  coords: { x: number; z: number };
+  radius: number;
+  tier: LeylineRiftTier;
+  levelReq: number;
+  phase: LeylineRiftPhase;
+  phaseName: string;
+  timeRemainingSec: number;
+  maxDurationSec: number;
+  instabilityPercent: number; // 0 to 100
+  activeWave: number;
+  totalWaves: number;
+  mobsRemaining: number;
+  bossId?: string;
+  bossName?: string;
+  bossHp?: number;
+  bossMaxHp?: number;
+  bossPhase?: number;
+  rewards: {
+    gold: number;
+    xp: number;
+    leylineShards: number;
+    gearRarity: ItemRarity;
+    bonusItem?: RPGItem;
+  };
+  chestSpawned: boolean;
+  chestOpened: boolean;
+  sealProgress: number; // 0 to 100%
+  color: string;
+  icon: string;
+  lore: string;
+}
+
+export interface WorldEventAlert {
+  id: string;
+  title: string;
+  message: string;
+  zone: string;
+  coords: { x: number; z: number };
+  tier: LeylineRiftTier;
+  timestamp: number;
+  durationSec: number;
+  icon: string;
+  color: string;
+}
+
+// ==========================================
+// INSTANCED DUNGEONS, BOSS PHASES & REWARD CHESTS
+// ==========================================
+
+export type DungeonBossPhase = 1 | 2 | 3;
+
+export interface DungeonActiveBoss {
+  id: string;
+  name: string;
+  title: string;
+  phase: DungeonBossPhase;
+  phaseName: string;
+  hp: number;
+  maxHp: number;
+  shieldHp: number;
+  maxShieldHp: number;
+  isShieldActive: boolean;
+  isEnraged: boolean;
+  enrageMultiplier: number;
+  castProgress?: number; // 0 to 100
+  castSkillName?: string;
+  castType?: 'meteor_barrage' | 'void_laser' | 'flame_cleave' | 'leyline_shockwave';
+  mechanicDescription: string;
+}
+
+export interface DungeonInstanceProgress {
+  instanceId: string;
+  dungeonId: string;
+  dungeon: DungeonDefinition;
+  status: 'in_progress' | 'boss_active' | 'victory' | 'failed' | 'exited';
+  currentFloor: number;
+  trashMobsAlive: number;
+  totalTrashMobs: number;
+  currentBossIndex: number;
+  totalBosses: number;
+  activeBoss: DungeonActiveBoss | null;
+  elapsedSeconds: number;
+  parTimeSeconds: number;
+  deathCount: number;
+  rankRating: 'S+' | 'S' | 'A' | 'B' | 'C';
+  chestSpawned: boolean;
+  chestOpened: boolean;
+  chestLoot: {
+    gold: number;
+    xp: number;
+    tokens: number;
+    items: RPGItem[];
+  };
+  partyMembers: PartyMember[];
+  completedAt?: number;
 }

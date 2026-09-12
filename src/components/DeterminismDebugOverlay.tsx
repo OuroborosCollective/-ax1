@@ -20,7 +20,17 @@ import {
   History,
   Compass,
   FileCode,
+  Layers,
 } from 'lucide-react';
+import {
+  ax1HostProjectionPort,
+  AX1_TICK_RATE_HZ,
+  AX1_TICK_INTERVAL_MS,
+  AX1_VISIBLE_COMPONENTS_MANIFEST,
+  runAx1ContractTests,
+  formatProjectionValue,
+  TestResult,
+} from '../ax1';
 import {
   NPCStateMachine,
   NPCSnapshot,
@@ -95,8 +105,9 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
   const [isSynced, setIsSynced] = useState(true);
   const [desyncLogs, setDesyncLogs] = useState<DesyncLogEntry[]>([]);
   const [activeTab, setActiveTab] = useState<
-    'are_guard' | 'world_hash' | 'living_world' | 'transitions' | 'input_buffer' | 'lingua' | 'entities' | 'logs'
+    'are_guard' | 'world_hash' | 'living_world' | 'transitions' | 'input_buffer' | 'lingua' | 'entities' | 'logs' | 'ax1_port'
   >('are_guard');
+  const [ax1TestResults, setAx1TestResults] = useState<{ allPassed: boolean; results: TestResult[] } | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
   const [simulatedDesyncActive, setSimulatedDesyncActive] = useState(false);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
@@ -509,6 +520,17 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
               {desyncLogs.length > 0 && (
                 <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping absolute top-1 right-1" />
               )}
+            </button>
+            <button
+              onClick={() => setActiveTab('ax1_port')}
+              className={`px-2.5 py-1 rounded flex items-center gap-1 font-sans transition-all relative ${
+                activeTab === 'ax1_port'
+                  ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 font-bold'
+                  : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/50'
+              }`}
+            >
+              <Layers className="w-3 h-3 text-[#00f0ff]" />
+              AX1 Port & Manifest
             </button>
           </div>
 
@@ -1201,6 +1223,118 @@ export const DeterminismDebugOverlay: React.FC<DeterminismDebugOverlayProps> = (
                     ))}
                   </>
                 )}
+              </div>
+            )}
+
+            {/* Tab 9: AX1 HostProjectionPort & Source Manifest */}
+            {activeTab === 'ax1_port' && (
+              <div className="space-y-3">
+                {/* 1. Tick Contract & Status Overview */}
+                <div className="p-2.5 bg-black/40 border border-stone-800 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-gray-400">AX1 Tickvertrag</span>
+                    <span className="text-[#00f0ff] font-bold">
+                      {AX1_TICK_INTERVAL_MS} ms / {AX1_TICK_RATE_HZ} Hz
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-[10px]">
+                    <div className="p-2 bg-stone-900/60 rounded border border-stone-800">
+                      <span className="text-gray-500 block">Port Status</span>
+                      <span className="text-emerald-400 font-bold">Aktiv (Neutral)</span>
+                    </div>
+                    <div className="p-2 bg-stone-900/60 rounded border border-stone-800">
+                      <span className="text-gray-500 block">Manifest Status</span>
+                      <span className="text-cyan-400 font-bold">{AX1_VISIBLE_COMPONENTS_MANIFEST.length} Komponenten</span>
+                    </div>
+                    <div className="p-2 bg-stone-900/60 rounded border border-stone-800">
+                      <span className="text-gray-500 block">Fehlende Werte</span>
+                      <span className="text-amber-400 font-bold">Strikt &apos;—&apos; (Kein Fake)</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Interactive Test Suite Execution */}
+                <div className="p-2.5 bg-black/40 border border-stone-800 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-gray-300 font-semibold flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-[#00f0ff]" />
+                      AX1 Invarianten &amp; Fehlende-Daten-Vertrag (11 Tests)
+                    </span>
+                    <button
+                      onClick={() => {
+                        const res = runAx1ContractTests();
+                        setAx1TestResults(res);
+                        onShowNotification?.(
+                          res.allPassed
+                            ? '✅ Alle AX1-Vertragstests bestanden: Keine Starterwerte erfunden, reiner Intent-Port aktiv.'
+                            : '⚠️ Vertragstest-Abweichung erkannt.',
+                          res.allPassed ? '#10b981' : '#f59e0b'
+                        );
+                      }}
+                      className="px-2 py-1 bg-[#00f0ff]/20 hover:bg-[#00f0ff]/30 text-[#00f0ff] border border-[#00f0ff]/40 rounded text-[10px] font-bold transition-all"
+                    >
+                      Tests Ausführen
+                    </button>
+                  </div>
+
+                  {ax1TestResults ? (
+                    <div className="space-y-1.5 mt-2">
+                      <div className={`p-2 rounded text-[10px] font-bold flex items-center justify-between ${
+                        ax1TestResults.allPassed ? 'bg-emerald-950/30 text-emerald-400 border border-emerald-500/30' : 'bg-rose-950/30 text-rose-400 border border-rose-500/30'
+                      }`}>
+                        <span>{ax1TestResults.allPassed ? 'VERTRAGSERFÜLLUNG: 100% BESTÄTIGT' : 'ABWEICHUNG ENTDECKT'}</span>
+                        <span>{ax1TestResults.results.filter(r => r.passed).length}/{ax1TestResults.results.length} Bestanden</span>
+                      </div>
+                      <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+                        {ax1TestResults.results.map((r, i) => (
+                          <div key={i} className="p-1.5 bg-stone-900/80 rounded border border-stone-800 text-[9px] flex items-start justify-between gap-2">
+                            <div>
+                              <span className="font-semibold text-gray-200">{r.name}</span>
+                              <span className="text-gray-400 block font-mono text-[8px]">{r.message}</span>
+                            </div>
+                            <span className={r.passed ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                              {r.passed ? 'PASS' : 'FAIL'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-gray-400">
+                      Klicke auf &quot;Tests Ausführen&quot;, um die Verträge gegen erfundene Gold-/Level-Werte, asynchrone Readback-Prüfungen und den 100ms Tickvertrag direkt zu verifizieren.
+                    </p>
+                  )}
+                </div>
+
+                {/* 3. Source Manifest Table */}
+                <div className="p-2.5 bg-black/40 border border-stone-800 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-gray-300 font-semibold flex items-center gap-1.5">
+                      <FileCode className="w-3.5 h-3.5 text-[#00f0ff]" />
+                      Sichtbare Komponenten &amp; SHA-256 Hashes
+                    </span>
+                    <span className="text-gray-500 text-[9px] font-mono">Revision: {AX1_VISIBLE_COMPONENTS_MANIFEST[0]?.ax1Revision}</span>
+                  </div>
+                  <div className="space-y-1 max-h-44 overflow-y-auto pr-1 font-mono text-[9px]">
+                    {AX1_VISIBLE_COMPONENTS_MANIFEST.map((item) => (
+                      <div key={item.componentName} className="p-1.5 bg-stone-900/80 rounded border border-stone-800 flex items-center justify-between">
+                        <div>
+                          <div className="text-[#00f0ff] font-semibold font-sans">{item.componentName}</div>
+                          <div className="text-gray-500 text-[8px]">{item.relativePath}</div>
+                          <div className="text-stone-400 text-[8px] truncate max-w-[240px]">
+                            SHA: {item.sha256.slice(0, 16)}...{item.sha256.slice(-8)}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="px-1.5 py-0.5 bg-stone-800 text-stone-300 rounded text-[8px] uppercase">
+                            {item.status}
+                          </span>
+                          <span className="block text-[8px] text-gray-500">{(item.bytes / 1024).toFixed(1)} KB</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
           </div>

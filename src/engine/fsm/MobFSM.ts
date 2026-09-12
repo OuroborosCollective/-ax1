@@ -145,6 +145,24 @@ export class MobCombatState implements IState<MobFsmContext> {
     const mob = ctx.mob;
     const visual = ctx.visual;
 
+    // 0. Combo Stagger Check: If mob is staggered by heavy-class weapons, freeze actions & wobble
+    if (mob.isStaggered && mob.staggerTimer && mob.staggerTimer > 0) {
+      mob.staggerTimer -= delta;
+      const wobble = Math.sin(performance.now() * 0.025) * 0.24;
+      visual.bodyMesh.rotation.z = wobble;
+      visual.bodyMesh.rotation.x = -0.18;
+      visual.bodyMesh.position.y = -0.1 + Math.sin(performance.now() * 0.015) * 0.08;
+
+      if (mob.staggerTimer <= 0) {
+        mob.isStaggered = false;
+        mob.staggerTimer = 0;
+        visual.bodyMesh.rotation.z = 0;
+        visual.bodyMesh.rotation.x = 0;
+        visual.bodyMesh.position.y = 0;
+      }
+      return; // Freeze movement and attack cooldown while staggered
+    }
+
     // 1. Leash check: If mob ventured too far from spawn, trigger Evade
     const leashStatus = threatMatrix.checkLeashAndDecay(mob.id, mob.x, mob.z);
     
